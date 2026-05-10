@@ -29,12 +29,27 @@ const FILES = {
   tSchematicIngredients: "tSchematicIngredients.txt",
   tSchematicQualities: "tSchematicQualities.txt",
   tSchematicResWeights: "tSchematicResWeights.txt",
+  // The two group files are .csv (comma-separated, quoted strings), not TSV.
+  // groups.csv = full taxonomy with depth levels.
+  // typegroup.csv = type→ancestor junction (one row per (type, ancestor) pair).
+  groups: "groups.csv",
+  typegroup: "typegroup.csv",
 } as const;
 
 // Stat order in tResourceType TSV (after the 6 metadata columns).
 // Matches GH's CREATE TABLE column order.
 const STATS_IN_RESOURCE_TYPE_ORDER = [
-  "CR", "CD", "DR", "FL", "HR", "MA", "PE", "OQ", "SR", "UT", "ER",
+  "CR",
+  "CD",
+  "DR",
+  "FL",
+  "HR",
+  "MA",
+  "PE",
+  "OQ",
+  "SR",
+  "UT",
+  "ER",
 ] as const;
 
 type Stat = (typeof STATS_IN_RESOURCE_TYPE_ORDER)[number];
@@ -92,6 +107,18 @@ interface SchematicDependency {
   slotName: string;
 }
 
+interface ResourceGroup {
+  id: string;
+  name: string;
+  depth: number;
+  parentCategory: string | null;
+}
+
+interface ResourceTypeGroupEdge {
+  typeId: string;
+  groupId: string;
+}
+
 interface SchematicOut {
   id: string;
   name: string;
@@ -125,6 +152,53 @@ async function fetchTsv(name: string): Promise<string[][]> {
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
     .map((line) => line.split("\t"));
+}
+
+/**
+ * Minimal CSV row parser. Handles `"quoted","strings",bare_numbers,"and trailing"`.
+ * Quoted fields may contain commas; unquoted are taken verbatim. No escape
+ * support — GH's group files don't use escaped quotes inside quoted strings.
+ */
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === '"') {
+      // quoted field
+      i++;
+      let v = "";
+      while (i < line.length && line[i] !== '"') {
+        v += line[i];
+        i++;
+      }
+      i++; // skip closing quote
+      out.push(v);
+      // consume comma after quoted value
+      if (line[i] === ",") i++;
+    } else {
+      // bare field — read to next comma or EOL
+      let v = "";
+      while (i < line.length && line[i] !== ",") {
+        v += line[i];
+        i++;
+      }
+      out.push(v);
+      if (line[i] === ",") i++;
+    }
+  }
+  return out;
+}
+
+async function fetchCsv(name: string): Promise<string[][]> {
+  const url = `${GH_RAW}/${name}`;
+  console.log(`  ↓ ${url}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
+  const text = await res.text();
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .map(parseCsvLine);
 }
 
 function intOrNull(s: string | undefined): number {
@@ -249,6 +323,34 @@ function parsePropertyGroups(rows: string[][]): SchematicPropertyGroup[] {
   return out;
 }
 
+function parseGroups(rows: string[][]): ResourceGroup[] {
+  // CSV: "groupId","groupName",depth,ordinal,"parentCategory"
+  const out: ResourceGroup[] = [];
+  for (const r of rows) {
+    if (r.length < 5) continue;
+    const parent = r[4];
+    out.push({
+      id: r[0],
+      name: r[1],
+      depth: intOrNull(r[2]),
+      // The root row ("resource") has parentCategory="default" — normalise to
+      // null so the FK / hierarchy traversal doesn't chase a fake parent.
+      parentCategory: !parent || parent === "default" ? null : parent,
+    });
+  }
+  return out;
+}
+
+function parseTypeGroups(rows: string[][]): ResourceTypeGroupEdge[] {
+  // CSV: "typeId","groupId"
+  const out: ResourceTypeGroupEdge[] = [];
+  for (const r of rows) {
+    if (r.length < 2) continue;
+    out.push({ typeId: r[0], groupId: r[1] });
+  }
+  return out;
+}
+
 function parseWeights(rows: string[][]): SchematicResWeight[] {
   const out: SchematicResWeight[] = [];
   for (const r of rows) {
@@ -324,7 +426,7 @@ function buildDependencies(
   }
 
   console.log(
-    `  dependency edges: ${deps.length} total; type-1 ${type1Hits} hits / ${type1Misses} misses; type-3 ${type3Hits} hits (${deps.filter(d => slots.find(s => s.schematicId === d.parentSchematicId && s.slotName === d.slotName)?.ingredientType === 3).length} edges from one-to-many) / ${type3Misses} misses`,
+    `  dependency edges: ${deps.length} total; type-1 ${type1Hits} hits / ${type1Misses} misses; type-3 ${type3Hits} hits (${deps.filter((d) => slots.find((s) => s.schematicId === d.parentSchematicId && s.slotName === d.slotName)?.ingredientType === 3).length} edges from one-to-many) / ${type3Misses} misses`,
   );
   return deps;
 }
@@ -332,12 +434,14 @@ function buildDependencies(
 async function main(): Promise<void> {
   const outDir = path.join(process.cwd(), "reference-data");
   console.log("=== fetching GH seedData ===");
-  const [resRows, schemRows, ingRows, qualRows, wtRows] = await Promise.all([
+  const [resRows, schemRows, ingRows, qualRows, wtRows, grpRows, tgRows] = await Promise.all([
     fetchTsv(FILES.tResourceType),
     fetchTsv(FILES.tSchematic),
     fetchTsv(FILES.tSchematicIngredients),
     fetchTsv(FILES.tSchematicQualities),
     fetchTsv(FILES.tSchematicResWeights),
+    fetchCsv(FILES.groups),
+    fetchCsv(FILES.typegroup),
   ]);
 
   console.log("\n=== parsing ===");
@@ -351,6 +455,10 @@ async function main(): Promise<void> {
   console.log(`  ${groups.length} property groups`);
   const weights = parseWeights(wtRows);
   console.log(`  ${weights.length} per-stat weights`);
+  const resourceGroups = parseGroups(grpRows);
+  console.log(`  ${resourceGroups.length} resource groups (taxonomy)`);
+  const typeGroupEdges = parseTypeGroups(tgRows);
+  console.log(`  ${typeGroupEdges.length} type→group ancestor edges`);
 
   console.log("\n=== building dependency graph ===");
   const deps = buildDependencies(schematics, slots);
@@ -362,11 +470,12 @@ async function main(): Promise<void> {
   const groupIdSet = new Set(groups.map((g) => g.id));
   if (groupIdSet.size !== groups.length) {
     throw new Error(
-      `Property group ID collision: ${groups.length} rows but only ${groupIdSet.size} distinct expQualityIDs. ` +
-        `GH's auto-increment guarantee has broken; importer needs remap.`,
+      `Property group ID collision: ${groups.length} rows but only ${groupIdSet.size} distinct expQualityIDs. GH's auto-increment guarantee has broken; importer needs remap.`,
     );
   }
-  const depKeys = new Set(deps.map((d) => `${d.parentSchematicId}|${d.childSchematicId}|${d.slotName}`));
+  const depKeys = new Set(
+    deps.map((d) => `${d.parentSchematicId}|${d.childSchematicId}|${d.slotName}`),
+  );
   if (depKeys.size !== deps.length) {
     throw new Error(
       `Dependency edge collision: ${deps.length} edges but only ${depKeys.size} distinct (parent,child,slot) triples.`,
@@ -376,6 +485,33 @@ async function main(): Promise<void> {
   if (schemIdSet.size !== schematics.length) {
     throw new Error(
       `Schematic ID collision: ${schematics.length} rows but only ${schemIdSet.size} distinct schematicIDs.`,
+    );
+  }
+  const groupIdSet2 = new Set(resourceGroups.map((g) => g.id));
+  if (groupIdSet2.size !== resourceGroups.length) {
+    throw new Error(
+      `Resource group ID collision: ${resourceGroups.length} rows but ${groupIdSet2.size} distinct group IDs.`,
+    );
+  }
+  // type→group edges should be unique pairs; duplicates would silently inflate
+  // the ancestor set during verdict scoring.
+  const tgPairSet = new Set(typeGroupEdges.map((e) => `${e.typeId}|${e.groupId}`));
+  if (tgPairSet.size !== typeGroupEdges.length) {
+    throw new Error(
+      `Type-group edge collision: ${typeGroupEdges.length} pairs but ${tgPairSet.size} distinct (type,group) pairs.`,
+    );
+  }
+  // Every type ID referenced by a type→group edge should resolve to a known
+  // type; every group ID referenced should resolve to a known group. Loud
+  // diagnostic, not fatal, since GH's data is older than current Core3 IFFs
+  // and a few unknown referents are expected (filter them downstream).
+  const typeIdSet = new Set(types.map((t) => t.id));
+  const groupIdLookupSet = new Set(resourceGroups.map((g) => g.id));
+  const orphanTypeRefs = typeGroupEdges.filter((e) => !typeIdSet.has(e.typeId)).length;
+  const orphanGroupRefs = typeGroupEdges.filter((e) => !groupIdLookupSet.has(e.groupId)).length;
+  if (orphanTypeRefs > 0 || orphanGroupRefs > 0) {
+    console.log(
+      `  ⚠ type-group edges with unknown referents — types: ${orphanTypeRefs}, groups: ${orphanGroupRefs} (loader will filter)`,
     );
   }
   console.log("  uniqueness guards passed");
@@ -436,7 +572,7 @@ async function main(): Promise<void> {
 
   await writeFile(
     path.join(outDir, "resource-types.json"),
-    `${JSON.stringify({ provenance, types }, null, 2)}\n`,
+    `${JSON.stringify({ provenance, types, resourceGroups, typeGroupEdges }, null, 2)}\n`,
   );
   await writeFile(
     path.join(outDir, "schematics.json"),
@@ -444,8 +580,12 @@ async function main(): Promise<void> {
   );
 
   console.log("\n=== output ===");
-  console.log(`  reference-data/resource-types.json — ${types.length} types`);
-  console.log(`  reference-data/schematics.json — ${schematicsOut.length} schematics, ${deps.length} dep edges`);
+  console.log(
+    `  reference-data/resource-types.json — ${types.length} types, ${resourceGroups.length} groups, ${typeGroupEdges.length} type-group edges`,
+  );
+  console.log(
+    `  reference-data/schematics.json — ${schematicsOut.length} schematics, ${deps.length} dep edges`,
+  );
 
   // Sanity: confirm T21 made it through and has dependencies.
   const t21 = schematicsOut.find((s) => s.id === "weapon_rifle_t21");

@@ -15,6 +15,13 @@
       "when": 1778449271082,
       "tag": "0001_shocking_spot",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778451672469,
+      "tag": "0002_real_swordsman",
+      "breakpoints": true
     }
   ]
 }

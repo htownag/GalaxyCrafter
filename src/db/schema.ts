@@ -5,7 +5,7 @@
 // schematics) and user-state tables (characters, inventory, verdicts) come
 // in Phase 2-3.
 
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const snapshots = sqliteTable("snapshots", {
   id: text("id").primaryKey(),
@@ -182,11 +182,90 @@ export const schematicDependencies = sqliteTable(
 // Records when a reference-data JSON file was last loaded. Hash-compared at
 // startup to skip reload when content hasn't changed.
 export const referenceMeta = sqliteTable("reference_meta", {
-  source: text("source").primaryKey(), // 'resource-types' | 'schematics'
+  source: text("source").primaryKey(), // 'resource-types' | 'schematics' | 'resource-groups'
   contentHash: text("content_hash").notNull(),
   loadedAt: integer("loaded_at").notNull(),
   rowCount: integer("row_count"),
 });
+
+// ============================================================
+// Phase 3 — Resource group hierarchy (for ingredient resolution)
+// ============================================================
+
+// Resource group taxonomy. Source: GH seedData/groups.csv.
+// Hierarchy is implied by depth + parent_category fields.
+//   resource(1) > organic(2) > creature_resources(3) > creature_food(4) > milk(5)
+//   resource(1) > inorganic(2) > mineral(3) > metal(4) > metal_ferrous(5) > iron(6)
+export const resourceGroups = sqliteTable("resource_groups", {
+  id: text("id").primaryKey(), // 'iron', 'metal', 'mineral'
+  name: text("name").notNull(),
+  depth: integer("depth").notNull(),
+  parentCategory: text("parent_category"), // top-tier bucket
+});
+
+// Junction table: each resource type to every group in its ancestry.
+// E.g. (iron_axidite, organic) does NOT exist;
+//      (iron_axidite, iron) exists,
+//      (iron_axidite, metal_ferrous) exists,
+//      (iron_axidite, metal) exists,
+//      (iron_axidite, mineral) exists,
+//      (iron_axidite, inorganic) exists.
+// This is the table the verdict engine queries to resolve a slot's
+// `ingredientObject` like "metal" to the full set of compatible types.
+export const resourceTypeGroups = sqliteTable(
+  "resource_type_groups",
+  {
+    typeId: text("type_id").notNull(),
+    groupId: text("group_id").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.typeId, t.groupId] }),
+  }),
+);
+
+// ============================================================
+// Phase 3 — Verdict outputs (recomputed each snapshot / mutation)
+// ============================================================
+
+// Per-resource verdict for a character against the current snapshot.
+// Recomputed implicitly whenever snapshot, active schematics, inventory
+// (Phase 4), or profession priority (Phase 8) changes.
+export const verdicts = sqliteTable(
+  "verdicts",
+  {
+    resourceId: text("resource_id").notNull(),
+    characterId: text("character_id").notNull(),
+    snapshotId: text("snapshot_id").notNull(),
+    tier: text("tier").notNull(), // 'CHASE' | 'MAYBE' | 'SKIP'
+    reason: text("reason"), // one-line plain-English explanation
+    topScore: real("top_score").notNull(), // max score across matched schematics — for sorting
+    matchedSchematicCount: integer("matched_schematic_count").notNull().default(0),
+    breakdownJson: text("breakdown_json"), // full per-(schematic, group) detail; Phase 5 UI consumes this
+    computedAt: integer("computed_at").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.resourceId, t.characterId, t.snapshotId] }),
+  }),
+);
+
+// Independent of personal verdict: server-best-tier flags. A resource can
+// be SKIP for the player AND SB_TOP_for_armorsmith — they're orthogonal.
+// Within-5% threshold matches GH's definition.
+export const sbFlags = sqliteTable(
+  "sb_flags",
+  {
+    resourceId: text("resource_id").notNull(),
+    snapshotId: text("snapshot_id").notNull(),
+    forProfession: text("for_profession").notNull(),
+    tier: text("tier").notNull(), // 'SB_TOP' | 'SB_NEAR'
+    score: real("score").notNull(),
+    topScoreOnSnapshot: real("top_score_on_snapshot").notNull(),
+    schematicId: text("schematic_id"), // which schematic of the profession produced this flag
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.resourceId, t.snapshotId, t.forProfession, t.tier] }),
+  }),
+);
 
 // ============================================================
 // Phase 2 — User state

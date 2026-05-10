@@ -1,0 +1,58 @@
+// Shared input/output types for the verdict-scoring pipeline.
+//
+// Kept dependency-free of the renderer / IPC / DB layers so the math is
+// trivially unit-testable. The orchestrator (`recompute.ts`) is the only
+// module here that talks to Drizzle.
+
+import type { StatKey } from "@shared/ipc-types";
+
+/**
+ * Per-stat weight in a property group. Weights are raw integers as imported
+ * from GH's `tSchematicResWeights.txt`; normalisation by the property
+ * group's `weightTotal` (or `Σ weights`, equivalent) happens inside the
+ * scoring function.
+ */
+export interface StatWeight {
+  stat: string; // 'OQ' | 'CD' | 'SR' | ... — narrow to StatKey at the rollup boundary
+  weight: number;
+}
+
+/**
+ * Per-resource stat values. `null` = the resource's type doesn't roll that
+ * stat (e.g. inorganic resources have no PE/FL). The scorer filters groups
+ * whose weighted stats are missing.
+ */
+export type ResourceStats = Record<StatKey, number | null>;
+
+/**
+ * Per-resource-type cap / floor. Missing = 0 (treated as "this type doesn't
+ * roll this stat"; pct_of_range short-circuits to 0).
+ */
+export type StatBounds = Record<StatKey, number>;
+
+/**
+ * Single schematic+property-group match result. `null` weights mean the
+ * group was unscoreable (resource is missing one of the weighted stats).
+ */
+export interface ScoredMatch {
+  schematicId: string;
+  schematicName: string;
+  propertyGroupId: number;
+  propertyName: string | null;
+  expGroup: string | null;
+  score: number; // 0..100
+  inheritedFromParent: boolean;
+}
+
+/**
+ * Final per-resource verdict (one row written to `verdicts` table per
+ * resource × character × snapshot).
+ */
+export interface ResourceVerdict {
+  tier: "CHASE" | "MAYBE" | "SKIP";
+  reason: string;
+  topScore: number;
+  matchedSchematicCount: number;
+  /** All (schematic, property-group, score) tuples; serialised to JSON for drill-down. */
+  breakdown: ScoredMatch[];
+}

@@ -1,13 +1,42 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Resource, SnapshotSummary, StatKey } from "@shared/ipc-types";
+import type { Resource, SnapshotSummary, StatKey, VerdictEntry } from "@shared/ipc-types";
 import { STAT_KEYS } from "@shared/ipc-types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
-type SortKey = "name" | "type" | "group" | StatKey;
+type SortKey = "verdict" | "name" | "type" | "group" | StatKey;
 type SortDir = "asc" | "desc";
 
+// Sort key for the verdict column. CHASE > MAYBE > none, and within tier,
+// higher topScore wins. Encoded as a single number so the shared sort
+// comparator below stays simple.
+function verdictSortValue(v: VerdictEntry | undefined): number {
+  if (!v) return -1;
+  const tierBase = v.tier === "CHASE" ? 2000 : v.tier === "MAYBE" ? 1000 : 0;
+  return tierBase + v.topScore;
+}
+
+function VerdictPill({ verdict }: { verdict: VerdictEntry }): JSX.Element {
+  // 2026-modern UI: subtle filled chip with hover tooltip rather than a
+  // pulsing badge. CHASE is the eye-magnet, MAYBE quieter.
+  const cls =
+    verdict.tier === "CHASE"
+      ? "bg-emerald-900/60 border-emerald-700 text-emerald-200"
+      : "bg-amber-900/50 border-amber-700 text-amber-200";
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium ${cls}`}
+      title={verdict.reason}
+    >
+      {verdict.tier}
+    </span>
+  );
+}
+
 export function Resources(): JSX.Element {
+  const { character } = useActiveCharacter();
   const [latest, setLatest] = useState<SnapshotSummary | null>(null);
   const [resources, setResources] = useState<Resource[]>([]);
+  const [verdictsById, setVerdictsById] = useState<Map<string, VerdictEntry>>(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,17 +51,35 @@ export function Resources(): JSX.Element {
       if (snap) {
         const list = await window.api.listResources();
         setResources(list);
+        if (character) {
+          const vs = await window.api.listVerdicts(character.id);
+          setVerdictsById(new Map(vs.map((v) => [v.resourceId, v])));
+        } else {
+          setVerdictsById(new Map());
+        }
       } else {
         setResources([]);
+        setVerdictsById(new Map());
       }
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [character]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Refetch verdicts whenever main signals a recompute. We refetch the
+  // *whole* page because resource list may also have shifted (e.g. snapshot
+  // refresh adds new spawns).
+  useEffect(() => {
+    if (!character) return;
+    const unsub = window.api.onVerdictsUpdated((payload) => {
+      if (payload.characterId === character.id) void load();
+    });
+    return unsub;
+  }, [character, load]);
 
   async function refresh(): Promise<void> {
     setError(null);
@@ -84,6 +131,9 @@ export function Resources(): JSX.Element {
         } else if (sortKey === "group") {
           av = a.groupId;
           bv = b.groupId;
+        } else if (sortKey === "verdict") {
+          av = verdictSortValue(verdictsById.get(a.id));
+          bv = verdictSortValue(verdictsById.get(b.id));
         } else {
           const aRaw = a.stats[sortKey];
           const bRaw = b.stats[sortKey];
@@ -99,7 +149,7 @@ export function Resources(): JSX.Element {
       });
     }
     return list;
-  }, [resources, search, sortKey, sortDir]);
+  }, [resources, search, sortKey, sortDir, verdictsById]);
 
   const sortArrow = (key: SortKey): string => {
     if (sortKey !== key) return "";
@@ -156,6 +206,19 @@ export function Resources(): JSX.Element {
                   <span className="text-slate-300">{resources.length}</span> resources
                 </>
               )}
+              {character && verdictsById.size > 0 && (
+                <>
+                  {" · "}
+                  <span className="text-emerald-300">
+                    {Array.from(verdictsById.values()).filter((v) => v.tier === "CHASE").length}
+                  </span>
+                  {" CHASE / "}
+                  <span className="text-amber-300">
+                    {Array.from(verdictsById.values()).filter((v) => v.tier === "MAYBE").length}
+                  </span>
+                  {" MAYBE"}
+                </>
+              )}
               {sortKey && (
                 <>
                   {" · sorted by "}
@@ -178,6 +241,15 @@ export function Resources(): JSX.Element {
             <table className="w-full text-sm">
               <thead className="bg-slate-800 text-slate-300 sticky top-0">
                 <tr>
+                  {character && (
+                    <th
+                      className="px-2 py-2 text-left font-medium cursor-pointer hover:bg-slate-800 select-none"
+                      onClick={() => toggleSort("verdict")}
+                      title="Your verdict for this resource"
+                    >
+                      Verdict{sortArrow("verdict")}
+                    </th>
+                  )}
                   <th
                     className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-800 select-none"
                     onClick={() => toggleSort("name")}
@@ -213,40 +285,49 @@ export function Resources(): JSX.Element {
                 {filtered.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={4 + STAT_KEYS.length}
+                      colSpan={4 + STAT_KEYS.length + (character ? 1 : 0)}
                       className="px-3 py-6 text-center text-slate-400"
                     >
                       No resources match <span className="text-slate-300">"{search}"</span>
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((r) => (
-                    <tr key={r.id} className="border-t border-slate-700 hover:bg-slate-800/50">
-                      <td className="px-3 py-2 font-mono text-slate-100">{r.name}</td>
-                      <td className="px-3 py-2 text-slate-200">{r.typeDisplayName}</td>
-                      <td className="px-3 py-2 text-slate-400 font-mono text-xs">{r.groupId}</td>
-                      <td className="px-3 py-2 text-slate-400 text-xs">{r.planets.join(", ")}</td>
-                      {STAT_KEYS.map((s) => {
-                        const v = r.stats[s];
-                        return (
-                          <td
-                            key={s}
-                            className="px-2 py-2 text-right tabular-nums"
-                          >
-                            {v === null ? (
-                              <span className="text-slate-700">—</span>
-                            ) : v >= 900 ? (
-                              <span className="text-emerald-400 font-semibold">{v}</span>
-                            ) : v >= 800 ? (
-                              <span className="text-emerald-200">{v}</span>
+                  filtered.map((r) => {
+                    const v = verdictsById.get(r.id);
+                    return (
+                      <tr key={r.id} className="border-t border-slate-700 hover:bg-slate-800/50">
+                        {character && (
+                          <td className="px-2 py-2">
+                            {v ? (
+                              <VerdictPill verdict={v} />
                             ) : (
-                              <span className="text-slate-300">{v}</span>
+                              <span className="text-slate-700">—</span>
                             )}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))
+                        )}
+                        <td className="px-3 py-2 font-mono text-slate-100">{r.name}</td>
+                        <td className="px-3 py-2 text-slate-200">{r.typeDisplayName}</td>
+                        <td className="px-3 py-2 text-slate-400 font-mono text-xs">{r.groupId}</td>
+                        <td className="px-3 py-2 text-slate-400 text-xs">{r.planets.join(", ")}</td>
+                        {STAT_KEYS.map((s) => {
+                          const stat = r.stats[s];
+                          return (
+                            <td key={s} className="px-2 py-2 text-right tabular-nums">
+                              {stat === null ? (
+                                <span className="text-slate-700">—</span>
+                              ) : stat >= 900 ? (
+                                <span className="text-emerald-400 font-semibold">{stat}</span>
+                              ) : stat >= 800 ? (
+                                <span className="text-emerald-200">{stat}</span>
+                              ) : (
+                                <span className="text-slate-300">{stat}</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

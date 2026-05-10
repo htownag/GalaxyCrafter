@@ -15,7 +15,19 @@ export interface ResourceStats {
   ER: number | null;
 }
 
-export const STAT_KEYS = ["OQ", "CR", "CD", "DR", "FL", "HR", "MA", "PE", "SR", "UT", "ER"] as const;
+export const STAT_KEYS = [
+  "OQ",
+  "CR",
+  "CD",
+  "DR",
+  "FL",
+  "HR",
+  "MA",
+  "PE",
+  "SR",
+  "UT",
+  "ER",
+] as const;
 export type StatKey = (typeof STAT_KEYS)[number];
 
 export interface Resource {
@@ -141,6 +153,18 @@ export interface CreateCharacterInput {
   priorities: ProfessionPriority[];
 }
 
+// === Phase 3: verdicts ===
+
+export type VerdictTier = "CHASE" | "MAYBE" | "SKIP";
+
+export interface VerdictEntry {
+  resourceId: string;
+  tier: VerdictTier;
+  reason: string;
+  topScore: number;
+  matchedSchematicCount: number;
+}
+
 export interface SchematicListFilter {
   query?: string;
   profession?: string;
@@ -175,4 +199,14 @@ export interface IpcApi {
 
   // Phase 2 — resource types
   getResourceType(id: string): Promise<ResourceTypeRef | null>;
+
+  // Phase 3 — verdicts
+  listVerdicts(characterId: string): Promise<VerdictEntry[]>;
+  /**
+   * Subscribe to verdict recompute completion. Listener fires whenever any
+   * mutation (snapshot refresh, active schematic add/remove, character
+   * create) triggered an implicit recompute. Returns an unsubscribe
+   * function — call it from useEffect cleanup.
+   */
+  onVerdictsUpdated(listener: (payload: { characterId: string }) => void): () => void;
 }

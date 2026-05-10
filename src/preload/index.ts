@@ -18,8 +18,7 @@ const api: IpcApi = {
   // Phase 2 — schematics
   listSchematics: (filter) => ipcRenderer.invoke("schematics:list", filter),
   getSchematicDetail: (id) => ipcRenderer.invoke("schematics:detail", id),
-  listActiveSchematics: (characterId) =>
-    ipcRenderer.invoke("schematics:listActive", characterId),
+  listActiveSchematics: (characterId) => ipcRenderer.invoke("schematics:listActive", characterId),
   addActiveSchematic: (characterId, schematicId, withSubcomponents) =>
     ipcRenderer.invoke("schematics:addActive", characterId, schematicId, withSubcomponents),
   removeActiveSchematic: (characterId, schematicId) =>
@@ -27,6 +26,15 @@ const api: IpcApi = {
 
   // Phase 2 — resource types
   getResourceType: (id) => ipcRenderer.invoke("resourceTypes:get", id),
+
+  // Phase 3 — verdicts
+  listVerdicts: (characterId) => ipcRenderer.invoke("verdicts:list", characterId),
+  onVerdictsUpdated: (listener) => {
+    const wrapped = (_evt: Electron.IpcRendererEvent, payload: { characterId: string }): void =>
+      listener(payload);
+    ipcRenderer.on("verdicts:updated", wrapped);
+    return () => ipcRenderer.removeListener("verdicts:updated", wrapped);
+  },
 };
 
 contextBridge.exposeInMainWorld("api", api);

@@ -31,3 +31,6 @@ yarn-error.log*
 
 # Drizzle generated migrations are committed; Drizzle cache is not
 drizzle/.drizzle-kit/
+
+# TypeScript incremental build cache (per-machine)
+*.tsbuildinfo

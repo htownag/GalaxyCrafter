@@ -1,0 +1,378 @@
+// Orchestrator — the main-side glue between the pure scoring core
+// (`src/core/verdict/`) and the Drizzle database. Lives outside `src/core/`
+// so that boundary stays renderer-importable.
+//
+// Called from IPC mutation handlers (snapshot:refresh, schematics:addActive,
+// schematics:removeActive, characters:create) as part of the same handler,
+// so verdicts stay in step with the data that drove them. Per advisor
+// decision: no renderer-facing IPC for recompute itself; the renderer just
+// queries `verdicts:list` after a mutation completes.
+//
+// One full pass for a typical SR2 snapshot (~700 resources × ~30 active
+// schematics × ~5 raw slots × ~5 property groups) is on the order of 10ms
+// — well under any user-perceptible latency budget.
+
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../../core/verdict/compat";
+import { rollupResourceVerdict } from "../../core/verdict/rollup";
+import { scoreGroup } from "../../core/verdict/score";
+import type { ResourceStats, ScoredMatch, StatBounds, StatWeight } from "../../core/verdict/types";
+import { getDb } from "../../db";
+import {
+  activeSchematics,
+  characters,
+  resourceObservations,
+  resourceTypeGroups,
+  resourceTypes,
+  resources,
+  schematicPropertyGroups,
+  schematicPropertyWeights,
+  schematicSlots,
+  schematics,
+  snapshots,
+  verdicts,
+} from "../../db/schema";
+
+interface ActiveSchematicScoringContext {
+  schematicId: string;
+  schematicName: string;
+  /** Only ingredientType === 0 slots; pre-filtered. */
+  rawSlots: Array<{ slotName: string; ingredientObject: string }>;
+  propertyGroups: Array<{
+    id: number;
+    propertyName: string | null;
+    expGroup: string | null;
+    weights: StatWeight[];
+  }>;
+  /** From active_schematics.source — informational, used in breakdown. */
+  inheritedFromParent: boolean;
+}
+
+function statsFromRow(row: typeof resources.$inferSelect): ResourceStats {
+  return {
+    OQ: row.oq,
+    CR: row.cr,
+    CD: row.cd,
+    DR: row.dr,
+    FL: row.fl,
+    HR: row.hr,
+    MA: row.ma,
+    PE: row.pe,
+    SR: row.sr,
+    UT: row.ut,
+    ER: row.er,
+  };
+}
+
+function capsFromTypeRow(row: typeof resourceTypes.$inferSelect): StatBounds {
+  return {
+    OQ: row.capOq,
+    CR: row.capCr,
+    CD: row.capCd,
+    DR: row.capDr,
+    FL: row.capFl,
+    HR: row.capHr,
+    MA: row.capMa,
+    PE: row.capPe,
+    SR: row.capSr,
+    UT: row.capUt,
+    ER: row.capEr,
+  };
+}
+
+function floorsFromTypeRow(row: typeof resourceTypes.$inferSelect): StatBounds {
+  return {
+    OQ: row.floorOq,
+    CR: row.floorCr,
+    CD: row.floorCd,
+    DR: row.floorDr,
+    FL: row.floorFl,
+    HR: row.floorHr,
+    MA: row.floorMa,
+    PE: row.floorPe,
+    SR: row.floorSr,
+    UT: row.floorUt,
+    ER: row.floorEr,
+  };
+}
+
+/**
+ * Build the per-character scoring context: every active schematic, with
+ * its raw slots and property-group weights denormalised into memory.
+ * Costs one query per table — schematics, slots, groups, weights.
+ */
+function buildActiveContext(characterId: string): ActiveSchematicScoringContext[] {
+  const db = getDb();
+  const activeRows = db
+    .select()
+    .from(activeSchematics)
+    .where(eq(activeSchematics.characterId, characterId))
+    .all();
+  if (activeRows.length === 0) return [];
+
+  const ids = activeRows.map((r) => r.schematicId);
+  const schemRows = db.select().from(schematics).where(inArray(schematics.id, ids)).all();
+  const schemById = new Map(schemRows.map((s) => [s.id, s]));
+
+  const slotRows = db
+    .select()
+    .from(schematicSlots)
+    .where(and(inArray(schematicSlots.schematicId, ids), eq(schematicSlots.ingredientType, 0)))
+    .all();
+  const slotsBySchematic = new Map<string, Array<{ slotName: string; ingredientObject: string }>>();
+  for (const s of slotRows) {
+    const arr = slotsBySchematic.get(s.schematicId) ?? [];
+    arr.push({ slotName: s.slotName, ingredientObject: s.ingredientObject });
+    slotsBySchematic.set(s.schematicId, arr);
+  }
+
+  const groupRows = db
+    .select()
+    .from(schematicPropertyGroups)
+    .where(inArray(schematicPropertyGroups.schematicId, ids))
+    .all();
+  const groupsBySchematic = new Map<string, typeof groupRows>();
+  for (const g of groupRows) {
+    const arr = groupsBySchematic.get(g.schematicId) ?? [];
+    arr.push(g);
+    groupsBySchematic.set(g.schematicId, arr);
+  }
+
+  const groupIds = groupRows.map((g) => g.id);
+  const weightRows =
+    groupIds.length > 0
+      ? db
+          .select()
+          .from(schematicPropertyWeights)
+          .where(inArray(schematicPropertyWeights.groupId, groupIds))
+          .all()
+      : [];
+  const weightsByGroup = new Map<number, StatWeight[]>();
+  for (const w of weightRows) {
+    const arr = weightsByGroup.get(w.groupId) ?? [];
+    arr.push({ stat: w.stat, weight: w.weight });
+    weightsByGroup.set(w.groupId, arr);
+  }
+
+  const ctx: ActiveSchematicScoringContext[] = [];
+  for (const a of activeRows) {
+    const s = schemById.get(a.schematicId);
+    if (!s) continue;
+    const rawSlots = slotsBySchematic.get(a.schematicId) ?? [];
+    if (rawSlots.length === 0) continue; // no raw-resource slots → nothing to score for this schematic
+    const groups = groupsBySchematic.get(a.schematicId) ?? [];
+    const propertyGroups = groups
+      .map((g) => ({
+        id: g.id,
+        propertyName: g.propertyName,
+        expGroup: g.expGroup,
+        weights: weightsByGroup.get(g.id) ?? [],
+      }))
+      // Filter to scoreable groups: must have weights, and at least one
+      // weighted stat must be one of the 11 known stats. Drops the "null
+      // weights / weightTotal 0" derived-property rows.
+      .filter((g) => g.weights.length > 0);
+    if (propertyGroups.length === 0) continue;
+    ctx.push({
+      schematicId: a.schematicId,
+      schematicName: s.name,
+      rawSlots,
+      propertyGroups,
+      inheritedFromParent: a.source === "inherited",
+    });
+  }
+  return ctx;
+}
+
+export interface RecomputeResult {
+  characterId: string;
+  snapshotId: string;
+  resourcesScored: number;
+  verdictsWritten: number;
+  chase: number;
+  maybe: number;
+  durationMs: number;
+}
+
+/**
+ * Recompute and persist the full per-resource verdict set for one
+ * character against the latest snapshot of their galaxy. If the character
+ * has no active schematics OR no snapshot exists yet, the verdicts table
+ * is cleared (defensively) and the function returns 0 counts.
+ *
+ * Safe to call inside an IPC handler — opens its own transaction for the
+ * write phase. Read phase is non-transactional (acceptable: the inputs
+ * are committed by the calling handler before this function runs).
+ */
+export function recomputeVerdicts(characterId: string): RecomputeResult {
+  const start = Date.now();
+  const db = getDb();
+  const char = db.select().from(characters).where(eq(characters.id, characterId)).get();
+  if (!char) throw new Error(`recomputeVerdicts: character not found: ${characterId}`);
+
+  const latestSnapshot = db
+    .select()
+    .from(snapshots)
+    .where(eq(snapshots.galaxyId, char.galaxyId))
+    .orderBy(desc(snapshots.fetchedAt))
+    .limit(1)
+    .get();
+  if (!latestSnapshot) {
+    return {
+      characterId,
+      snapshotId: "",
+      resourcesScored: 0,
+      verdictsWritten: 0,
+      chase: 0,
+      maybe: 0,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  // Scope all delete predicates to (character, current snapshot) so a future
+  // historical-verdict feature (despawn diff, snapshot replay) doesn't lose
+  // its trail. Phase 3 never writes verdicts for any other snapshot, so this
+  // is currently identical in effect to character-wide delete, but the
+  // narrower predicate is the right contract to lock in now.
+  const clearCurrent = (): void => {
+    getDb()
+      .delete(verdicts)
+      .where(
+        and(eq(verdicts.characterId, characterId), eq(verdicts.snapshotId, latestSnapshot.id)),
+      )
+      .run();
+  };
+
+  const activeCtx = buildActiveContext(characterId);
+  // Clear current-snapshot verdicts so the table reflects only current
+  // state. We do this even when active list is empty.
+  if (activeCtx.length === 0) {
+    clearCurrent();
+    return {
+      characterId,
+      snapshotId: latestSnapshot.id,
+      resourcesScored: 0,
+      verdictsWritten: 0,
+      chase: 0,
+      maybe: 0,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  // Load resources observed in the latest snapshot.
+  const obsRows = db
+    .select()
+    .from(resourceObservations)
+    .where(eq(resourceObservations.snapshotId, latestSnapshot.id))
+    .all();
+  const resourceIdsInSnapshot = obsRows.map((r) => r.resourceId);
+  if (resourceIdsInSnapshot.length === 0) {
+    clearCurrent();
+    return {
+      characterId,
+      snapshotId: latestSnapshot.id,
+      resourcesScored: 0,
+      verdictsWritten: 0,
+      chase: 0,
+      maybe: 0,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  const resourceRows = db
+    .select()
+    .from(resources)
+    .where(inArray(resources.id, resourceIdsInSnapshot))
+    .all();
+
+  // Resource-type lookup (caps/floors). Build once.
+  const typeIds = Array.from(new Set(resourceRows.map((r) => r.typeId)));
+  const typeRows = db.select().from(resourceTypes).where(inArray(resourceTypes.id, typeIds)).all();
+  const typeById = new Map(typeRows.map((t) => [t.id, t]));
+
+  // Type→ancestor edges. We only need edges for the types present in the
+  // snapshot; this trims the working set considerably.
+  const tgEdges = db
+    .select()
+    .from(resourceTypeGroups)
+    .where(inArray(resourceTypeGroups.typeId, typeIds))
+    .all();
+  const typeAncestors = buildTypeAncestorMap(tgEdges);
+
+  // Score every resource against every active-schematic scoring context.
+  const verdictRows: Array<typeof verdicts.$inferInsert> = [];
+  let chaseCount = 0;
+  let maybeCount = 0;
+  const now = Date.now();
+
+  for (const r of resourceRows) {
+    const tr = typeById.get(r.typeId);
+    if (!tr) continue; // Resource of a type the reference data doesn't know — skip.
+
+    const caps = capsFromTypeRow(tr);
+    const floors = floorsFromTypeRow(tr);
+    const stats = statsFromRow(r);
+
+    const matches: ScoredMatch[] = [];
+    for (const ctx of activeCtx) {
+      // Does the resource's type fit ANY raw slot on this schematic?
+      const fits = ctx.rawSlots.some((s) =>
+        resourceTypeFitsRawSlot(r.typeId, s.ingredientObject, typeAncestors),
+      );
+      if (!fits) continue;
+
+      // For each property group on this schematic, score against the resource.
+      for (const g of ctx.propertyGroups) {
+        const score = scoreGroup(stats, caps, floors, g.weights);
+        if (score === null) continue;
+        matches.push({
+          schematicId: ctx.schematicId,
+          schematicName: ctx.schematicName,
+          propertyGroupId: g.id,
+          propertyName: g.propertyName,
+          expGroup: g.expGroup,
+          score,
+          inheritedFromParent: ctx.inheritedFromParent,
+        });
+      }
+    }
+
+    const verdict = rollupResourceVerdict(matches);
+    if (!verdict) continue;
+    if (verdict.tier === "CHASE") chaseCount++;
+    else if (verdict.tier === "MAYBE") maybeCount++;
+    verdictRows.push({
+      resourceId: r.id,
+      characterId,
+      snapshotId: latestSnapshot.id,
+      tier: verdict.tier,
+      reason: verdict.reason,
+      topScore: verdict.topScore,
+      matchedSchematicCount: verdict.matchedSchematicCount,
+      breakdownJson: JSON.stringify(verdict.breakdown),
+      computedAt: now,
+    });
+  }
+
+  // Atomic swap: clear current-snapshot verdicts, insert new. The transaction
+  // is the integrity boundary if anything throws mid-insert. Predicate scoped
+  // to current snapshot only (see clearCurrent rationale above).
+  db.transaction((tx) => {
+    tx.delete(verdicts)
+      .where(and(eq(verdicts.characterId, characterId), eq(verdicts.snapshotId, latestSnapshot.id)))
+      .run();
+    for (const row of verdictRows) {
+      tx.insert(verdicts).values(row).run();
+    }
+  });
+
+  return {
+    characterId,
+    snapshotId: latestSnapshot.id,
+    resourcesScored: resourceRows.length,
+    verdictsWritten: verdictRows.length,
+    chase: chaseCount,
+    maybe: maybeCount,
+    durationMs: Date.now() - start,
+  };
+}

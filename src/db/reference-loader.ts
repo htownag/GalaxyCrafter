@@ -9,6 +9,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "./index";
 import {
   referenceMeta,
+  resourceGroups,
+  resourceTypeGroups,
   resourceTypes,
   schematicDependencies,
   schematicPropertyGroups,
@@ -31,6 +33,18 @@ interface ResourceTypeJson {
   parentGroup: string;
   caps: Record<string, number>;
   floors: Record<string, number>;
+}
+
+interface ResourceGroupJson {
+  id: string;
+  name: string;
+  depth: number;
+  parentCategory: string | null;
+}
+
+interface TypeGroupEdgeJson {
+  typeId: string;
+  groupId: string;
 }
 
 interface SchematicJson {
@@ -82,11 +96,7 @@ function isStale(source: string, contentHash: string): boolean {
 function markLoaded(source: string, contentHash: string, rowCount: number): void {
   const db = getDb();
   const now = Date.now();
-  const existing = db
-    .select()
-    .from(referenceMeta)
-    .where(eq(referenceMeta.source, source))
-    .get();
+  const existing = db.select().from(referenceMeta).where(eq(referenceMeta.source, source)).get();
   if (existing) {
     db.update(referenceMeta)
       .set({ contentHash, loadedAt: now, rowCount })
@@ -108,12 +118,31 @@ function loadResourceTypes(appRoot: string): void {
   const parsed = JSON.parse(raw) as {
     provenance: Provenance;
     types: ResourceTypeJson[];
+    resourceGroups?: ResourceGroupJson[];
+    typeGroupEdges?: TypeGroupEdgeJson[];
   };
+  const groupsList = parsed.resourceGroups ?? [];
+  const edgesList = parsed.typeGroupEdges ?? [];
   console.log(
-    `[ref] loading ${parsed.types.length} resource types (source: ${parsed.provenance.sourceCommit})`,
+    `[ref] loading ${parsed.types.length} resource types + ${groupsList.length} groups + ${edgesList.length} type-group edges (source: ${parsed.provenance.sourceCommit})`,
   );
+
+  // Pre-filter type-group edges against known type/group IDs so an upstream
+  // GH data drift doesn't punch holes through the loader.
+  const typeIdSet = new Set(parsed.types.map((t) => t.id));
+  const groupIdSet = new Set(groupsList.map((g) => g.id));
+  const validEdges = edgesList.filter((e) => typeIdSet.has(e.typeId) && groupIdSet.has(e.groupId));
+  const droppedEdges = edgesList.length - validEdges.length;
+  if (droppedEdges > 0) {
+    console.warn(`[ref] dropped ${droppedEdges} type-group edges with unknown referents`);
+  }
+
   const db = getDb();
   db.transaction((tx) => {
+    // Order matters when FKs are enforced — but better-sqlite3 defaults to
+    // off. We still order deletes child-first for clarity.
+    tx.delete(resourceTypeGroups).run();
+    tx.delete(resourceGroups).run();
     tx.delete(resourceTypes).run();
     for (const t of parsed.types) {
       tx.insert(resourceTypes)
@@ -147,8 +176,21 @@ function loadResourceTypes(appRoot: string): void {
         })
         .run();
     }
+    for (const g of groupsList) {
+      tx.insert(resourceGroups)
+        .values({
+          id: g.id,
+          name: g.name,
+          depth: g.depth,
+          parentCategory: g.parentCategory,
+        })
+        .run();
+    }
+    for (const e of validEdges) {
+      tx.insert(resourceTypeGroups).values({ typeId: e.typeId, groupId: e.groupId }).run();
+    }
   });
-  markLoaded("resource-types", hash, parsed.types.length);
+  markLoaded("resource-types", hash, parsed.types.length + groupsList.length + validEdges.length);
 }
 
 function loadSchematics(appRoot: string): void {
