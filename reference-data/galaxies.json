@@ -1,0 +1,17 @@
+{
+  "galaxies": [
+    {
+      "key": "sr2",
+      "id": 151,
+      "name": "Sentinels Republic 2",
+      "active": true
+    },
+    {
+      "key": "sr_alderaan",
+      "id": 72,
+      "name": "SR Alderaan",
+      "active": false
+    }
+  ],
+  "default": "sr2"
+}
