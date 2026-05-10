@@ -355,6 +355,31 @@ async function main(): Promise<void> {
   console.log("\n=== building dependency graph ===");
   const deps = buildDependencies(schematics, slots);
 
+  // Sanity guards — verify uniqueness so reference-loader inserts don't trip
+  // SQLITE_CONSTRAINT on duplicate primary keys. If these throw, GH's seed
+  // data has drifted from auto-increment guarantees and the importer needs
+  // a remap strategy.
+  const groupIdSet = new Set(groups.map((g) => g.id));
+  if (groupIdSet.size !== groups.length) {
+    throw new Error(
+      `Property group ID collision: ${groups.length} rows but only ${groupIdSet.size} distinct expQualityIDs. ` +
+        `GH's auto-increment guarantee has broken; importer needs remap.`,
+    );
+  }
+  const depKeys = new Set(deps.map((d) => `${d.parentSchematicId}|${d.childSchematicId}|${d.slotName}`));
+  if (depKeys.size !== deps.length) {
+    throw new Error(
+      `Dependency edge collision: ${deps.length} edges but only ${depKeys.size} distinct (parent,child,slot) triples.`,
+    );
+  }
+  const schemIdSet = new Set(schematics.map((s) => s.id));
+  if (schemIdSet.size !== schematics.length) {
+    throw new Error(
+      `Schematic ID collision: ${schematics.length} rows but only ${schemIdSet.size} distinct schematicIDs.`,
+    );
+  }
+  console.log("  uniqueness guards passed");
+
   console.log("\n=== denormalising schematics ===");
   const slotsBySchematic = new Map<string, SchematicSlot[]>();
   for (const s of slots) {

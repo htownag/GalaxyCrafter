@@ -724,6 +724,18 @@ SQLite in WAL mode handles concurrent readers + one writer. The ingest pipeline 
 
 None v1. Solo-use; no need. If shared later, opt-in basic analytics (which features get used) might be valuable. Defer.
 
+### 9.8 Phase 2 carry-forwards (added 2026-05-10)
+
+Surfaced during Phase 2 advisor review; not blocking but worth recording:
+
+- **schematics.json packaging** — at 6.14 MB it bundles fine into asar but adds ~5–10s to every electron-builder run with default compression. Two cleaner paths when packaging becomes a focus: (a) ship as `extraResource` outside asar so it's mmap-able, (b) split into per-profession chunks loaded lazily by the renderer. Defer until Phase 8 polish.
+
+- **electron-vite main-process auto-restart** — during the Phase 2 dev session, edits to `src/main/*.ts` did NOT trigger a main rebuild + Electron restart. Manual `Stop-Process electron` was needed before changes took effect. Likely fix: add `watch: { include: ['src/main/**', 'src/preload/**', 'src/shared/**'] }` to the `main` block in `electron.vite.config.ts`. Five-minute investigation next session. The habit to keep in the meantime: watch for a fresh `[db] opening` log line after editing main files before trusting the change ran.
+
+- **Phase 3 verdict-engine prerequisites** — two open questions for Phase 3:
+  - The 47 type-1 + 117 type-3 unresolved dependency edges from the importer — what's in those? If they include common Weaponsmith sub-sub-components, transitive priority inheritance has gaps. Dump the unresolved IFF paths once and skim before Phase 3 verdict logic lands.
+  - `resource_groups` table is scaffolded but unpopulated. Generic-family ingredients like `metal` / `chemical` (T21's grip_assembly is `metal`) need either an explicit groups hierarchy or a derive-at-query strategy. Source: walk `resource_types.parentGroup`/`groupId` chains; cross-check by sampling GH XML `<group_id>` values to confirm they're the canonical search keys.
+
 ---
 
 ## 10. Quick start summary

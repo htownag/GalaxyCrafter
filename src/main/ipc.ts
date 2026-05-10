@@ -166,8 +166,15 @@ export function registerIpc(): void {
     const db = getDb();
     const activeId = getSetting("active.character");
     if (!activeId) {
-      // No active character set — auto-pick the first one if any exist.
-      const first = db.select().from(characters).limit(1).get();
+      // No active character set — auto-pick deterministically by oldest first.
+      // (SQLite's no-ORDER-BY result order is undefined; without this the
+      // chosen character could shift between launches when there's >1 char.)
+      const first = db
+        .select()
+        .from(characters)
+        .orderBy(characters.createdAt)
+        .limit(1)
+        .get();
       if (first) {
         setSetting("active.character", first.id);
         return first;
