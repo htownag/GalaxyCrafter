@@ -1,12 +1,14 @@
 import path from "node:path";
 import { BrowserWindow, app } from "electron";
 import { closeDb, openDb } from "../db";
+import { loadReferenceData } from "../db/reference-loader";
 import { registerIpc } from "./ipc";
 
 function initDb(): void {
   const dbPath = path.join(app.getPath("userData"), "galaxycrafter.sqlite");
   const migrationsFolder = path.join(app.getAppPath(), "drizzle", "migrations");
   openDb(dbPath, migrationsFolder);
+  loadReferenceData(app.getAppPath());
 }
 
 function createWindow(): void {

@@ -259,3 +259,55 @@ Workplan updates to apply next:
 4. §5.13 waypoint feature → mark "local-only in v1; GH waypoint import deferred."
 
 These edits are minor and follow this note in sequence.
+
+---
+
+## 9. Pre-Phase-2 data source pivot (2026-05-10)
+
+**Decision: use GH seedData files for resource caps + schematics, NOT raw Core3 IFF parsing via SWG-Forge.**
+
+This is a deliberate change from workplan §9.2 plan A (Core3 Lua + IFF). Recorded here so future-Claude / future-Ryan sees the silent decision and can audit it.
+
+### What GH ships as seedData
+
+The `pwillworth/galaxyharvester` GitHub repo commits five TSV files at `database/seedData/`, derived by the GH team from Core3 IFFs around 2017 (initial) and 2019 (last refresh, "import from publish9 branch"):
+
+| File | Rows | Purpose |
+|------|-----:|---------|
+| `tResourceType.txt` | ~700 | Per-type stat caps + floors: 22 numeric columns = 11 stats × (min, max). `0,0` pair = stat doesn't apply to type. |
+| `tSchematic.txt` | 1,710 | Schematic master: `schematicID`, name, skill group, crafting tab, complexity, object path, parent object path. |
+| `tSchematicIngredients.txt` | 7,516 | Ingredient slots: schematic FK + slot name + type (0=raw / 1,3=component) + ingredient (resource family for raw, IFF path for component) + units required. |
+| `tSchematicQualities.txt` | 13,372 | Property groups: auto `expQualityID` + schematic FK + property name + exp group (`expDamage` etc) + weight total. |
+| `tSchematicResWeights.txt` | 9,005 | Per-stat weights: `expQualityID` FK + stat code + weight (1–5). |
+
+All four schematic tables join cleanly. Walked T21 Rifle (`weapon_rifle_t21`) end-to-end: 8 ingredient slots (5 raw, 2 components, 1 optional component), 15 quality groups (5 valid `expDamage`, 4 `expEffeciency`, 1 `exp_durability`, 1 `expRange`, 4 null/derived), per-stat weights resolved.
+
+### Coverage audit
+
+- **1,710 GH schematics vs 1,778 in Core3's `schematics.lua` manifest = 96.2%.** 68-schematic gap. Likely 2020+ additions Core3 made after publish9; vanilla Weaponsmith / Armorsmith / Architect / Chef / Tailor scope is intact.
+- **T21 Rifle present** (workplan exit criteria; "T21 Heavy Carbine" in workplan was a naming slip — the schematic is classified as Rifle in-game).
+- **Weaponsmith priority schematics confirmed present:** all major carbines (CDEF, DH17, DH17 Short, E11, EE3, Elite, Laser, DXR-6), all major pistols (CDEF, D18, DH17, DL44, DL44 Metal, Power5), barrels + cores + sub-components.
+- **Resource types:** `tResourceType.txt` covers vanilla resource tree; the 96.2% coverage applies to schematics, not resource types.
+
+### Staleness
+
+Last touched 2019-04-20 ("Schematic data update based on import from publish9 branch"). SWG vanilla crafting mechanics have been frozen since SOE shut down in 2011, so the 2019 snapshot of vanilla-Core3 schematic data is still accurate for vanilla servers. Risk only applies to:
+
+- Servers that added custom schematics since publish9 (SR2 may have some; design §7.3 explicitly defers SR2 customs to post-v1, so this risk is bounded).
+- Servers that tweaked weights on existing schematics (the §6.4 audit will catch this — see addendum to workplan).
+
+### Why not raw Core3 IFF parsing (plan A)
+
+SWG-Forge `@swgemu/core` is read-validated for `resource_tree.iff` (per KB) but the draft-schematic IFF format has chunks not yet built into the SWG-Forge crafting-workshop package as of this audit. Writing a complete IFF→JSON parser for draft schematics would have taken multiple days of chunk-format reverse engineering (FORM DSCH structure isn't formally documented in @swgemu/core's published surface). GH seedData is functionally the same data, pre-parsed and tested by GH's production.
+
+If GH seedData turns out to have weight drift vs current Core3 (the §6.4 audit will catch this pre-Phase-6), the recovery is: write `scripts/import-core3-iffs.ts` to produce the same canonical `reference-data/schematics.json` shape. Architecture is decoupled from source via the JSON intermediate.
+
+### Workplan amendments applied
+
+- **§6.2 (Locate Core3 paths):** updated — primary source for v1 is GH seedData; Core3 IFFs are the swap-in if the audit fails.
+- **§6.4 (Pre-Phase-6 audit):** expanded — now also compares a sample of GH seedData property weights against current Core3 IFF schematics before locking simulator predictions. Adds ~30 min to that future audit; prevents a class of subtle "right math + wrong weights" failures.
+- **Phase 2 importer:** renamed from `import-core3-schematics.ts` to `import-gh-seedata.ts`. One producer; emits canonical `reference-data/schematics.json` + `resource-types.json`. Future Core3-IFF-based importer would produce the same JSON shape, swap-in only.
+
+### TL;DR
+
+Pragmatic shortcut. Saves multiple days of IFF-parsing work. Coverage + freshness audited and acceptable. Pre-Phase-6 audit catches the only realistic failure mode (weight drift) before it can corrupt simulator predictions. Architecture preserves the option to switch sources later via one-file replacement.

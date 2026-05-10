@@ -620,9 +620,10 @@ Published SWG wikis describe live-SWG crafting formulas including a "compensatio
 Action:
 - Grep Core3 C++ under `~/workspace/Core3/MMOCoreORB/src/server/zone/managers/crafting/` (and related crafting subsystems) for the actual assembly-success and experimentation formulas.
 - Document the exact formulas used (assembly success, experimentation roll, MA weighting, multi-property compensation factor) in `GalaxyCrafter/research-notes.md` under a `crafting-math` section.
-- Phase 6 implementation matches this source verbatim, not the wikis.
+- **NEW 2026-05-10:** Also sample ~10 schematics' per-stat property weights (loaded from GH seedData per `research-notes.md` §9) against the actual property weights in current Core3 IFFs. If GH seedData (2019 publish9 vintage) has drifted from current Core3, Phase 6 simulator predictions would be coherent-looking but wrong. Recovery: write `scripts/import-core3-iffs.ts` to replace the GH-derived weights with current ones. Adds ~30 min to the audit.
+- Phase 6 implementation matches Core3 source verbatim, not the wikis.
 
-Estimated effort: half a day of reading + summarising. Must complete before any simulator code is written.
+Estimated effort: half a day of reading + summarising plus the new ~30-min weight-sample comparison. Must complete before any simulator code is written.
 
 ---
 
