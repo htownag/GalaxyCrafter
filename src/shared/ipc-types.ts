@@ -165,6 +165,68 @@ export interface VerdictEntry {
   matchedSchematicCount: number;
 }
 
+/**
+ * Single (schematic, property-group) match for a resource. Matches the
+ * shape persisted in `verdicts.breakdown_json`.
+ */
+export interface ScoredMatchView {
+  schematicId: string;
+  schematicName: string;
+  propertyGroupId: number;
+  propertyName: string | null;
+  expGroup: string | null;
+  score: number;
+  inheritedFromParent: boolean;
+}
+
+/**
+ * Per-resource detail payload. Shipping Phase 3B: stats + bounds, verdict
+ * + breakdown, and "fits these active schematics" rollup. Image, despawn
+ * estimate, owned-best/delta, and waypoint concentration are deferred —
+ * they need data we don't ingest yet (image) or Phase 4 inventory (deltas).
+ */
+export interface ResourceDetail {
+  // Identity
+  id: string;
+  name: string;
+  typeId: string;
+  typeDisplayName: string;
+  groupId: string;
+  groupName: string | null; // "Iron" for groupId=iron, via resource_groups table
+  enteredBy: string;
+  addedDate: number;
+  galaxyId: number;
+  planets: string[];
+
+  // 11 stats with their per-type bounds for percent-of-cap visualisation.
+  stats: ResourceStats;
+  caps: Record<string, number>;
+  floors: Record<string, number>;
+
+  // Verdict (only present when an active character has a verdict for this
+  // resource in the current snapshot). breakdown is the full per-match
+  // detail deserialised from the persisted JSON, sorted descending by score.
+  verdict: {
+    tier: VerdictTier;
+    reason: string;
+    topScore: number;
+    matchedSchematicCount: number;
+    breakdown: ScoredMatchView[];
+  } | null;
+
+  // Active schematics that have at least one raw-resource slot this resource
+  // type fits. Useful for "this resource type fills the Stock slot on T21
+  // Heavy Carbine and the Power Handler on DH17" — orientation independent
+  // of whether the verdict broke threshold.
+  fitsActiveSchematics: Array<{
+    schematicId: string;
+    schematicName: string;
+    profession: string | null;
+    inheritedFromParent: boolean;
+    matchingSlots: string[];
+  }>;
+}
+
 export interface SchematicListFilter {
   query?: string;
   profession?: string;
@@ -202,6 +264,7 @@ export interface IpcApi {
 
   // Phase 3 — verdicts
   listVerdicts(characterId: string): Promise<VerdictEntry[]>;
+  getResourceDetail(resourceId: string): Promise<ResourceDetail | null>;
   /**
    * Subscribe to verdict recompute completion. Listener fires whenever any
    * mutation (snapshot refresh, active schematic add/remove, character

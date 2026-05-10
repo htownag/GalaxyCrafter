@@ -1,6 +1,7 @@
 import type { Resource, SnapshotSummary, StatKey, VerdictEntry } from "@shared/ipc-types";
 import { STAT_KEYS } from "@shared/ipc-types";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
 type SortKey = "verdict" | "name" | "type" | "group" | StatKey;
@@ -305,7 +306,14 @@ export function Resources(): JSX.Element {
                             )}
                           </td>
                         )}
-                        <td className="px-3 py-2 font-mono text-slate-100">{r.name}</td>
+                        <td className="px-3 py-2 font-mono">
+                          <Link
+                            to={`/resources/${encodeURIComponent(r.id)}`}
+                            className="text-slate-100 hover:text-emerald-300"
+                          >
+                            {r.name}
+                          </Link>
+                        </td>
                         <td className="px-3 py-2 text-slate-200">{r.typeDisplayName}</td>
                         <td className="px-3 py-2 text-slate-400 font-mono text-xs">{r.groupId}</td>
                         <td className="px-3 py-2 text-slate-400 text-xs">{r.planets.join(", ")}</td>

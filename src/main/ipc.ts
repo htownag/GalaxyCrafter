@@ -7,8 +7,10 @@ import {
   activeSchematics,
   characters,
   professionPriorities,
+  resourceGroups,
   resourceObservations,
   resourcePlanets,
+  resourceTypeGroups,
   resourceTypes,
   resources,
   schematicDependencies,
@@ -28,14 +30,18 @@ import type {
   ProfessionPriority,
   RefreshResult,
   Resource,
+  ResourceDetail,
   ResourceTypeRef,
+  ScoredMatchView,
   SchematicDetail,
   SchematicListFilter,
   SchematicSummary,
   SnapshotSummary,
   VerdictEntry,
+  VerdictTier,
 } from "../shared/ipc-types";
 import { professionForSkillGroup } from "../shared/professions";
+import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../core/verdict/compat";
 import { recomputeVerdicts } from "./verdict/recompute";
 
 interface GalaxyConfig {
@@ -587,6 +593,178 @@ export function registerIpc(): void {
       matchedSchematicCount: r.matchedSchematicCount,
     }));
   });
+
+  ipcMain.handle(
+    "resources:detail",
+    async (_evt, resourceId: string): Promise<ResourceDetail | null> => {
+      const db = getDb();
+      const r = db.select().from(resources).where(eq(resources.id, resourceId)).get();
+      if (!r) return null;
+
+      const tr = db.select().from(resourceTypes).where(eq(resourceTypes.id, r.typeId)).get();
+      const group = tr
+        ? db.select().from(resourceGroups).where(eq(resourceGroups.id, tr.groupId)).get()
+        : null;
+      const planetRows = db
+        .select()
+        .from(resourcePlanets)
+        .where(eq(resourcePlanets.resourceId, r.id))
+        .all();
+
+      // Latest verdict for the active character on the current snapshot of
+      // this resource's galaxy. Falls back to null if no character/snapshot/
+      // verdict — UI just hides the section.
+      let verdictView: ResourceDetail["verdict"] = null;
+      const activeCharId = getSetting("active.character");
+      if (activeCharId) {
+        const latest = db
+          .select()
+          .from(snapshots)
+          .where(eq(snapshots.galaxyId, r.galaxyId))
+          .orderBy(desc(snapshots.fetchedAt))
+          .limit(1)
+          .get();
+        if (latest) {
+          const v = db
+            .select()
+            .from(verdicts)
+            .where(
+              and(
+                eq(verdicts.resourceId, r.id),
+                eq(verdicts.characterId, activeCharId),
+                eq(verdicts.snapshotId, latest.id),
+              ),
+            )
+            .get();
+          if (v) {
+            // breakdown_json is persisted as the JSON-serialised ScoredMatch
+            // array (already sorted highest-score-first by rollup.ts).
+            let breakdown: ScoredMatchView[] = [];
+            if (v.breakdownJson) {
+              try {
+                breakdown = JSON.parse(v.breakdownJson) as ScoredMatchView[];
+              } catch (e) {
+                console.warn(`[resources:detail] failed to parse breakdown for ${r.id}:`, e);
+              }
+            }
+            verdictView = {
+              tier: v.tier as VerdictTier,
+              reason: v.reason ?? "",
+              topScore: v.topScore,
+              matchedSchematicCount: v.matchedSchematicCount,
+              breakdown,
+            };
+          }
+        }
+      }
+
+      // "Fits these active schematics" — pull the active list, then for each
+      // active schematic walk its raw slots and check if this resource's
+      // type can fill any of them. Independent of whether the verdict broke
+      // threshold (a SKIP resource might still legitimately fill a slot —
+      // useful orientation).
+      const fitsActiveSchematics: ResourceDetail["fitsActiveSchematics"] = [];
+      if (activeCharId) {
+        const activeRows = db
+          .select()
+          .from(activeSchematics)
+          .where(eq(activeSchematics.characterId, activeCharId))
+          .all();
+        if (activeRows.length > 0) {
+          const ids = activeRows.map((a) => a.schematicId);
+          const schemRows = db
+            .select()
+            .from(schematics)
+            .where(inArray(schematics.id, ids))
+            .all();
+          const schemById = new Map(schemRows.map((s) => [s.id, s]));
+          // Raw slots only (ingredientType 0).
+          const slotRows = db
+            .select()
+            .from(schematicSlots)
+            .where(
+              and(
+                inArray(schematicSlots.schematicId, ids),
+                eq(schematicSlots.ingredientType, 0),
+              ),
+            )
+            .all();
+          // Type-ancestor edges for this one type — enough to resolve all
+          // raw-slot ingredient identifiers.
+          const tgEdges = db
+            .select()
+            .from(resourceTypeGroups)
+            .where(eq(resourceTypeGroups.typeId, r.typeId))
+            .all();
+          const typeAncestors = buildTypeAncestorMap(tgEdges);
+
+          const slotsBySchematic = new Map<
+            string,
+            Array<{ slotName: string; ingredientObject: string }>
+          >();
+          for (const s of slotRows) {
+            const arr = slotsBySchematic.get(s.schematicId) ?? [];
+            arr.push({ slotName: s.slotName, ingredientObject: s.ingredientObject });
+            slotsBySchematic.set(s.schematicId, arr);
+          }
+
+          for (const a of activeRows) {
+            const s = schemById.get(a.schematicId);
+            if (!s) continue;
+            const candidateSlots = slotsBySchematic.get(a.schematicId) ?? [];
+            const matchingSlots = candidateSlots
+              .filter((cs) =>
+                resourceTypeFitsRawSlot(r.typeId, cs.ingredientObject, typeAncestors),
+              )
+              .map((cs) => cs.slotName);
+            if (matchingSlots.length === 0) continue;
+            fitsActiveSchematics.push({
+              schematicId: a.schematicId,
+              schematicName: s.name,
+              profession: professionForSkillGroup(s.skillGroup),
+              inheritedFromParent: a.source === "inherited",
+              matchingSlots,
+            });
+          }
+          fitsActiveSchematics.sort((a, b) => a.schematicName.localeCompare(b.schematicName));
+        }
+      }
+
+      return {
+        id: r.id,
+        name: r.name,
+        typeId: r.typeId,
+        typeDisplayName: r.typeDisplayName,
+        groupId: r.groupId,
+        groupName: group?.name ?? null,
+        enteredBy: r.enteredBy ?? "",
+        addedDate: r.addedDate,
+        galaxyId: r.galaxyId,
+        planets: planetRows.map((p) => p.planet),
+        stats: {
+          OQ: r.oq, CR: r.cr, CD: r.cd, DR: r.dr,
+          FL: r.fl, HR: r.hr, MA: r.ma, PE: r.pe,
+          SR: r.sr, UT: r.ut, ER: r.er,
+        },
+        caps: tr
+          ? {
+              OQ: tr.capOq, CR: tr.capCr, CD: tr.capCd, DR: tr.capDr,
+              FL: tr.capFl, HR: tr.capHr, MA: tr.capMa, PE: tr.capPe,
+              SR: tr.capSr, UT: tr.capUt, ER: tr.capEr,
+            }
+          : { OQ: 0, CR: 0, CD: 0, DR: 0, FL: 0, HR: 0, MA: 0, PE: 0, SR: 0, UT: 0, ER: 0 },
+        floors: tr
+          ? {
+              OQ: tr.floorOq, CR: tr.floorCr, CD: tr.floorCd, DR: tr.floorDr,
+              FL: tr.floorFl, HR: tr.floorHr, MA: tr.floorMa, PE: tr.floorPe,
+              SR: tr.floorSr, UT: tr.floorUt, ER: tr.floorEr,
+            }
+          : { OQ: 0, CR: 0, CD: 0, DR: 0, FL: 0, HR: 0, MA: 0, PE: 0, SR: 0, UT: 0, ER: 0 },
+        verdict: verdictView,
+        fitsActiveSchematics,
+      };
+    },
+  );
 
   ipcMain.handle("resourceTypes:get", async (_evt, id: string): Promise<ResourceTypeRef | null> => {
     const db = getDb();
