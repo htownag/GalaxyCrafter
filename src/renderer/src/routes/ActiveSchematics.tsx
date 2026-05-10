@@ -33,7 +33,7 @@ export function ActiveSchematics(): JSX.Element {
 
   if (!character) {
     return (
-      <div className="p-6 text-zinc-500">
+      <div className="p-6 text-slate-400">
         No active character. Create one in{" "}
         <Link to="/character" className="text-emerald-400 hover:text-emerald-300">
           Character
@@ -56,16 +56,16 @@ export function ActiveSchematics(): JSX.Element {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-zinc-100">Active schematics</h2>
-        <p className="text-xs text-zinc-500 mt-0.5">
+        <h2 className="text-xl font-semibold text-slate-100">Active schematics</h2>
+        <p className="text-xs text-slate-400 mt-0.5">
           {entries.length} on {character.name}. These drive the verdict engine (Phase 3 — coming next).
         </p>
       </div>
 
-      {loading && <p className="text-zinc-500">Loading…</p>}
+      {loading && <p className="text-slate-400">Loading…</p>}
 
       {!loading && entries.length === 0 && (
-        <p className="text-zinc-500">
+        <p className="text-slate-400">
           None yet. Go to{" "}
           <Link to="/schematics" className="text-emerald-400 hover:text-emerald-300">
             Schematics
@@ -76,10 +76,10 @@ export function ActiveSchematics(): JSX.Element {
 
       {!loading && userAdded.length > 0 && (
         <section className="mb-8">
-          <h3 className="text-sm font-medium text-zinc-300 mb-2">User-added</h3>
-          <div className="overflow-x-auto rounded-md border border-zinc-800">
+          <h3 className="text-sm font-medium text-slate-300 mb-2">User-added</h3>
+          <div className="overflow-x-auto rounded-md border border-slate-700">
             <table className="w-full text-sm">
-              <thead className="bg-zinc-900 text-zinc-300">
+              <thead className="bg-slate-800 text-slate-300">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="px-3 py-2 text-left font-medium">Profession</th>
@@ -92,7 +92,7 @@ export function ActiveSchematics(): JSX.Element {
                 {userAdded.map((e) => {
                   const subs = inheritedByParent.get(e.schematicId) ?? [];
                   return (
-                    <tr key={e.schematicId} className="border-t border-zinc-800">
+                    <tr key={e.schematicId} className="border-t border-slate-700">
                       <td className="px-3 py-2">
                         <Link
                           to={`/schematics/${e.schematicId}`}
@@ -101,22 +101,22 @@ export function ActiveSchematics(): JSX.Element {
                           {e.schematicName}
                         </Link>
                       </td>
-                      <td className="px-3 py-2 text-zinc-300">
+                      <td className="px-3 py-2 text-slate-300">
                         {e.profession
                           ? PROFESSIONS.find((p) => p.id === e.profession)?.name ?? e.profession
                           : "—"}
                       </td>
-                      <td className="px-3 py-2 text-zinc-500 text-xs font-mono">
+                      <td className="px-3 py-2 text-slate-400 text-xs font-mono">
                         {e.craftingTab ?? "—"}
                       </td>
-                      <td className="px-3 py-2 text-right text-zinc-400 tabular-nums">
+                      <td className="px-3 py-2 text-right text-slate-400 tabular-nums">
                         {subs.length}
                       </td>
                       <td className="px-3 py-2">
                         <button
                           type="button"
                           onClick={() => remove(e.schematicId)}
-                          className="text-xs text-zinc-500 hover:text-red-400"
+                          className="text-xs text-slate-400 hover:text-red-400"
                         >
                           remove
                         </button>
@@ -132,13 +132,13 @@ export function ActiveSchematics(): JSX.Element {
 
       {!loading && inheritedByParent.size > 0 && (
         <section>
-          <h3 className="text-sm font-medium text-zinc-300 mb-2">Inherited (sub-components)</h3>
+          <h3 className="text-sm font-medium text-slate-300 mb-2">Inherited (sub-components)</h3>
           <div className="space-y-3">
             {[...inheritedByParent.entries()].map(([parentId, subs]) => {
               const parent = entries.find((e) => e.schematicId === parentId);
               return (
-                <div key={parentId} className="rounded-md border border-zinc-800 overflow-hidden">
-                  <div className="bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
+                <div key={parentId} className="rounded-md border border-slate-700 overflow-hidden">
+                  <div className="bg-slate-800 px-3 py-2 text-xs text-slate-400">
                     sub-components of{" "}
                     <Link
                       to={`/schematics/${parentId}`}
@@ -150,7 +150,7 @@ export function ActiveSchematics(): JSX.Element {
                   <table className="w-full text-sm">
                     <tbody>
                       {subs.map((s) => (
-                        <tr key={s.schematicId} className="border-t border-zinc-800">
+                        <tr key={s.schematicId} className="border-t border-slate-700">
                           <td className="px-3 py-2">
                             <Link
                               to={`/schematics/${s.schematicId}`}
@@ -159,14 +159,14 @@ export function ActiveSchematics(): JSX.Element {
                               {s.schematicName}
                             </Link>
                           </td>
-                          <td className="px-3 py-2 text-zinc-500 text-xs font-mono">
+                          <td className="px-3 py-2 text-slate-400 text-xs font-mono">
                             {s.craftingTab ?? "—"}
                           </td>
                           <td className="px-3 py-2 w-0">
                             <button
                               type="button"
                               onClick={() => remove(s.schematicId)}
-                              className="text-xs text-zinc-500 hover:text-red-400"
+                              className="text-xs text-slate-400 hover:text-red-400"
                             >
                               remove
                             </button>

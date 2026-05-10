@@ -110,8 +110,8 @@ export function Resources(): JSX.Element {
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-semibold text-zinc-100">Current spawns</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">SR2 resources from galaxyharvester.net</p>
+          <h2 className="text-xl font-semibold text-slate-100">Current spawns</h2>
+          <p className="text-xs text-slate-400 mt-0.5">SR2 resources from galaxyharvester.net</p>
         </div>
         <button
           type="button"
@@ -130,8 +130,8 @@ export function Resources(): JSX.Element {
       )}
 
       {resources.length === 0 && !busy && !error && (
-        <p className="text-zinc-500 mt-8">
-          No snapshot yet. Click <strong className="text-zinc-300">Pull SR2 snapshot</strong> to
+        <p className="text-slate-400 mt-8">
+          No snapshot yet. Click <strong className="text-slate-300">Pull SR2 snapshot</strong> to
           fetch the current spawn list.
         </p>
       )}
@@ -144,28 +144,28 @@ export function Resources(): JSX.Element {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Filter by name, type, group, or planet…"
-              className="flex-1 max-w-md px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 focus:border-emerald-600 text-sm"
+              className="flex-1 max-w-md px-3 py-2 rounded-md bg-slate-800 border border-slate-700 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 focus:border-emerald-600 text-sm"
             />
-            <span className="text-xs text-zinc-500 tabular-nums">
+            <span className="text-xs text-slate-400 tabular-nums">
               {search ? (
                 <>
-                  <span className="text-zinc-300">{filtered.length}</span> of {resources.length}
+                  <span className="text-slate-300">{filtered.length}</span> of {resources.length}
                 </>
               ) : (
                 <>
-                  <span className="text-zinc-300">{resources.length}</span> resources
+                  <span className="text-slate-300">{resources.length}</span> resources
                 </>
               )}
               {sortKey && (
                 <>
                   {" · sorted by "}
-                  <span className="text-zinc-300">
+                  <span className="text-slate-300">
                     {sortKey} {sortDir === "asc" ? "↑" : "↓"}
                   </span>
                   <button
                     type="button"
                     onClick={() => setSortKey(null)}
-                    className="ml-2 text-zinc-600 hover:text-zinc-300"
+                    className="ml-2 text-slate-600 hover:text-slate-300"
                   >
                     clear
                   </button>
@@ -174,24 +174,24 @@ export function Resources(): JSX.Element {
             </span>
           </div>
 
-          <div className="overflow-x-auto rounded-md border border-zinc-800">
+          <div className="overflow-x-auto rounded-md border border-slate-700">
             <table className="w-full text-sm">
-              <thead className="bg-zinc-900 text-zinc-300 sticky top-0">
+              <thead className="bg-slate-800 text-slate-300 sticky top-0">
                 <tr>
                   <th
-                    className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-zinc-800 select-none"
+                    className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-800 select-none"
                     onClick={() => toggleSort("name")}
                   >
                     Name{sortArrow("name")}
                   </th>
                   <th
-                    className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-zinc-800 select-none"
+                    className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-800 select-none"
                     onClick={() => toggleSort("type")}
                   >
                     Type{sortArrow("type")}
                   </th>
                   <th
-                    className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-zinc-800 select-none"
+                    className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-800 select-none"
                     onClick={() => toggleSort("group")}
                   >
                     Group{sortArrow("group")}
@@ -200,7 +200,7 @@ export function Resources(): JSX.Element {
                   {STAT_KEYS.map((s) => (
                     <th
                       key={s}
-                      className="px-2 py-2 text-right font-medium cursor-pointer hover:bg-zinc-800 select-none"
+                      className="px-2 py-2 text-right font-medium cursor-pointer hover:bg-slate-800 select-none"
                       onClick={() => toggleSort(s)}
                     >
                       {s}
@@ -214,18 +214,18 @@ export function Resources(): JSX.Element {
                   <tr>
                     <td
                       colSpan={4 + STAT_KEYS.length}
-                      className="px-3 py-6 text-center text-zinc-500"
+                      className="px-3 py-6 text-center text-slate-400"
                     >
-                      No resources match <span className="text-zinc-300">"{search}"</span>
+                      No resources match <span className="text-slate-300">"{search}"</span>
                     </td>
                   </tr>
                 ) : (
                   filtered.map((r) => (
-                    <tr key={r.id} className="border-t border-zinc-800 hover:bg-zinc-900/50">
-                      <td className="px-3 py-2 font-mono text-zinc-100">{r.name}</td>
-                      <td className="px-3 py-2 text-zinc-200">{r.typeDisplayName}</td>
-                      <td className="px-3 py-2 text-zinc-500 font-mono text-xs">{r.groupId}</td>
-                      <td className="px-3 py-2 text-zinc-400 text-xs">{r.planets.join(", ")}</td>
+                    <tr key={r.id} className="border-t border-slate-700 hover:bg-slate-800/50">
+                      <td className="px-3 py-2 font-mono text-slate-100">{r.name}</td>
+                      <td className="px-3 py-2 text-slate-200">{r.typeDisplayName}</td>
+                      <td className="px-3 py-2 text-slate-400 font-mono text-xs">{r.groupId}</td>
+                      <td className="px-3 py-2 text-slate-400 text-xs">{r.planets.join(", ")}</td>
                       {STAT_KEYS.map((s) => {
                         const v = r.stats[s];
                         return (
@@ -234,13 +234,13 @@ export function Resources(): JSX.Element {
                             className="px-2 py-2 text-right tabular-nums"
                           >
                             {v === null ? (
-                              <span className="text-zinc-700">—</span>
+                              <span className="text-slate-700">—</span>
                             ) : v >= 900 ? (
                               <span className="text-emerald-400 font-semibold">{v}</span>
                             ) : v >= 800 ? (
                               <span className="text-emerald-200">{v}</span>
                             ) : (
-                              <span className="text-zinc-300">{v}</span>
+                              <span className="text-slate-300">{v}</span>
                             )}
                           </td>
                         );

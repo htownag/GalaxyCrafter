@@ -49,12 +49,12 @@ export function App(): JSX.Element {
       value={{ character: activeCharacter, refresh: refreshActiveCharacter }}
     >
       <div className="min-h-screen flex flex-col">
-        <header className="border-b border-zinc-800 bg-zinc-950 sticky top-0 z-10">
+        <header className="border-b border-slate-700 bg-slate-900 sticky top-0 z-10">
           <div className="flex items-center justify-between px-6 py-3">
             <div className="flex items-center gap-6">
               <div>
-                <h1 className="text-lg font-semibold text-zinc-100">GalaxyCrafter</h1>
-                <p className="text-[10px] text-zinc-600 leading-none">Phase 2 — reference data</p>
+                <h1 className="text-lg font-semibold text-slate-100">GalaxyCrafter</h1>
+                <p className="text-[10px] text-slate-600 leading-none">Phase 2 — reference data</p>
               </div>
               <nav className="flex items-center gap-1">
                 {TABS.map((t) => (
@@ -65,8 +65,8 @@ export function App(): JSX.Element {
                     className={({ isActive }) =>
                       `px-3 py-1.5 rounded-md text-sm transition-colors ${
                         isActive
-                          ? "bg-zinc-800 text-zinc-100"
-                          : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+                          ? "bg-slate-800 text-slate-100"
+                          : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
                       }`
                     }
                   >
@@ -75,10 +75,10 @@ export function App(): JSX.Element {
                 ))}
               </nav>
             </div>
-            <div className="flex items-center gap-4 text-xs text-zinc-500">
+            <div className="flex items-center gap-4 text-xs text-slate-400">
               {activeCharacter && (
                 <span className="text-right leading-tight">
-                  <span className="block text-zinc-300">{activeCharacter.name}</span>
+                  <span className="block text-slate-300">{activeCharacter.name}</span>
                   <span className="block text-[10px]">galaxy {activeCharacter.galaxyId}</span>
                 </span>
               )}
@@ -87,7 +87,7 @@ export function App(): JSX.Element {
                   className="text-right leading-tight"
                   title={new Date(latestSnapshot.fetchedAt).toLocaleString()}
                 >
-                  <span className="block text-zinc-300">{relativeAge(latestSnapshot.fetchedAt)}</span>
+                  <span className="block text-slate-300">{relativeAge(latestSnapshot.fetchedAt)}</span>
                   <span className="block text-[10px]">{latestSnapshot.resourceCount} spawns</span>
                 </span>
               )}

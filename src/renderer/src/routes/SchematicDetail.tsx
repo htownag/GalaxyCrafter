@@ -64,10 +64,10 @@ export function SchematicDetail(): JSX.Element {
     }
   }
 
-  if (loading) return <div className="p-6 text-zinc-500">Loading…</div>;
+  if (loading) return <div className="p-6 text-slate-400">Loading…</div>;
   if (!detail) {
     return (
-      <div className="p-6 text-zinc-500">
+      <div className="p-6 text-slate-400">
         Schematic not found.{" "}
         <Link to="/schematics" className="text-emerald-400 hover:text-emerald-300">
           Back to list
@@ -82,37 +82,37 @@ export function SchematicDetail(): JSX.Element {
   return (
     <div className="p-6 max-w-5xl">
       <div className="mb-1">
-        <Link to="/schematics" className="text-xs text-zinc-500 hover:text-zinc-300">
+        <Link to="/schematics" className="text-xs text-slate-400 hover:text-slate-300">
           ← Schematics
         </Link>
       </div>
       <div className="flex items-start justify-between gap-4 mb-6">
         <div>
-          <h2 className="text-2xl font-semibold text-zinc-100">{detail.name}</h2>
-          <p className="text-xs text-zinc-500 font-mono mt-1">{detail.id}</p>
-          <div className="flex items-center gap-4 mt-2 text-xs text-zinc-400">
+          <h2 className="text-2xl font-semibold text-slate-100">{detail.name}</h2>
+          <p className="text-xs text-slate-400 font-mono mt-1">{detail.id}</p>
+          <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
             {detail.profession && (
               <span>
-                <span className="text-zinc-600">profession:</span>{" "}
-                <span className="text-zinc-300">
+                <span className="text-slate-600">profession:</span>{" "}
+                <span className="text-slate-300">
                   {PROFESSIONS.find((p) => p.id === detail.profession)?.name ?? detail.profession}
                 </span>
               </span>
             )}
             {detail.craftingTab && (
               <span>
-                <span className="text-zinc-600">tab:</span>{" "}
-                <span className="text-zinc-300 font-mono">{detail.craftingTab}</span>
+                <span className="text-slate-600">tab:</span>{" "}
+                <span className="text-slate-300 font-mono">{detail.craftingTab}</span>
               </span>
             )}
             <span>
-              <span className="text-zinc-600">complexity:</span>{" "}
-              <span className="text-zinc-300">{detail.complexity}</span>
+              <span className="text-slate-600">complexity:</span>{" "}
+              <span className="text-slate-300">{detail.complexity}</span>
             </span>
             {detail.skillGroup && (
               <span>
-                <span className="text-zinc-600">skill group:</span>{" "}
-                <span className="text-zinc-300 font-mono">{detail.skillGroup}</span>
+                <span className="text-slate-600">skill group:</span>{" "}
+                <span className="text-slate-300 font-mono">{detail.skillGroup}</span>
               </span>
             )}
           </div>
@@ -124,7 +124,7 @@ export function SchematicDetail(): JSX.Element {
                 type="button"
                 onClick={remove}
                 disabled={busy}
-                className="px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-100 text-sm"
+                className="px-4 py-2 rounded-md bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-100 text-sm"
               >
                 {busy ? "…" : "Remove from active"}
               </button>
@@ -138,7 +138,7 @@ export function SchematicDetail(): JSX.Element {
                 >
                   {busy ? "…" : "Add to active"}
                 </button>
-                <label className="flex items-center gap-2 text-xs text-zinc-400">
+                <label className="flex items-center gap-2 text-xs text-slate-400">
                   <input
                     type="checkbox"
                     checked={withSubs}
@@ -150,7 +150,7 @@ export function SchematicDetail(): JSX.Element {
               </>
             )
           ) : (
-            <span className="text-xs text-zinc-500">Create a character to enable active list.</span>
+            <span className="text-xs text-slate-400">Create a character to enable active list.</span>
           )}
         </div>
       </div>
@@ -162,12 +162,12 @@ export function SchematicDetail(): JSX.Element {
       )}
 
       <section className="mb-8">
-        <h3 className="text-sm font-medium text-zinc-300 mb-2">
+        <h3 className="text-sm font-medium text-slate-300 mb-2">
           Ingredient slots ({detail.slots.length})
         </h3>
-        <div className="overflow-x-auto rounded-md border border-zinc-800">
+        <div className="overflow-x-auto rounded-md border border-slate-700">
           <table className="w-full text-sm">
-            <thead className="bg-zinc-900 text-zinc-300">
+            <thead className="bg-slate-800 text-slate-300">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Slot</th>
                 <th className="px-3 py-2 text-left font-medium">Type</th>
@@ -177,15 +177,15 @@ export function SchematicDetail(): JSX.Element {
             </thead>
             <tbody>
               {detail.slots.map((slot) => (
-                <tr key={slot.slotName} className="border-t border-zinc-800">
-                  <td className="px-3 py-2 text-zinc-100 font-mono text-xs">{slot.slotName}</td>
-                  <td className="px-3 py-2 text-zinc-400 text-xs">
+                <tr key={slot.slotName} className="border-t border-slate-700">
+                  <td className="px-3 py-2 text-slate-100 font-mono text-xs">{slot.slotName}</td>
+                  <td className="px-3 py-2 text-slate-400 text-xs">
                     {INGREDIENT_TYPE_LABEL[slot.ingredientType] ?? `type ${slot.ingredientType}`}
                   </td>
-                  <td className="px-3 py-2 text-zinc-300 font-mono text-xs">
+                  <td className="px-3 py-2 text-slate-300 font-mono text-xs">
                     {slot.ingredientObject}
                   </td>
-                  <td className="px-3 py-2 text-right text-zinc-300 tabular-nums">
+                  <td className="px-3 py-2 text-right text-slate-300 tabular-nums">
                     {slot.unitsRequired}
                   </td>
                 </tr>
@@ -196,14 +196,14 @@ export function SchematicDetail(): JSX.Element {
       </section>
 
       <section className="mb-8">
-        <h3 className="text-sm font-medium text-zinc-300 mb-2">
+        <h3 className="text-sm font-medium text-slate-300 mb-2">
           Experimental property groups ({realPropertyGroups.length} experiment-able
           {detail.propertyGroups.length - realPropertyGroups.length > 0 &&
             `; ${detail.propertyGroups.length - realPropertyGroups.length} derived`})
         </h3>
-        <div className="overflow-x-auto rounded-md border border-zinc-800">
+        <div className="overflow-x-auto rounded-md border border-slate-700">
           <table className="w-full text-sm">
-            <thead className="bg-zinc-900 text-zinc-300">
+            <thead className="bg-slate-800 text-slate-300">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Property</th>
                 <th className="px-3 py-2 text-left font-medium">Group</th>
@@ -214,21 +214,21 @@ export function SchematicDetail(): JSX.Element {
               {realPropertyGroups.map((g) => {
                 const total = g.weights.reduce((sum, w) => sum + w.weight, 0) || 1;
                 return (
-                  <tr key={g.id} className="border-t border-zinc-800">
-                    <td className="px-3 py-2 text-zinc-100 text-xs">{g.propertyName}</td>
-                    <td className="px-3 py-2 text-zinc-400 text-xs font-mono">{g.expGroup}</td>
+                  <tr key={g.id} className="border-t border-slate-700">
+                    <td className="px-3 py-2 text-slate-100 text-xs">{g.propertyName}</td>
+                    <td className="px-3 py-2 text-slate-400 text-xs font-mono">{g.expGroup}</td>
                     <td className="px-3 py-2 text-xs">
                       <div className="flex flex-wrap gap-2">
                         {g.weights.length === 0 ? (
-                          <span className="text-zinc-600">(no stat weights)</span>
+                          <span className="text-slate-600">(no stat weights)</span>
                         ) : (
                           g.weights.map((w) => (
                             <span
                               key={w.stat}
-                              className="px-2 py-0.5 rounded border border-zinc-700 bg-zinc-900 text-zinc-200"
+                              className="px-2 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-200"
                             >
                               <span className="font-mono">{w.stat}</span>
-                              <span className="text-zinc-500"> {Math.round((w.weight / total) * 100)}%</span>
+                              <span className="text-slate-400"> {Math.round((w.weight / total) * 100)}%</span>
                             </span>
                           ))
                         )}
@@ -244,16 +244,16 @@ export function SchematicDetail(): JSX.Element {
 
       {detail.dependencies.length > 0 && (
         <section className="mb-8">
-          <h3 className="text-sm font-medium text-zinc-300 mb-2">
+          <h3 className="text-sm font-medium text-slate-300 mb-2">
             Sub-component schematics ({detail.dependencies.length})
           </h3>
-          <p className="text-xs text-zinc-500 mb-2">
+          <p className="text-xs text-slate-400 mb-2">
             These schematics produce components this schematic consumes as input. When you add this
             schematic with sub-components, they're added as inherited entries.
           </p>
-          <div className="overflow-x-auto rounded-md border border-zinc-800">
+          <div className="overflow-x-auto rounded-md border border-slate-700">
             <table className="w-full text-sm">
-              <thead className="bg-zinc-900 text-zinc-300">
+              <thead className="bg-slate-800 text-slate-300">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Slot</th>
                   <th className="px-3 py-2 text-left font-medium">Sub-component schematic</th>
@@ -261,8 +261,8 @@ export function SchematicDetail(): JSX.Element {
               </thead>
               <tbody>
                 {detail.dependencies.map((d) => (
-                  <tr key={`${d.slotName}-${d.childSchematicId}`} className="border-t border-zinc-800">
-                    <td className="px-3 py-2 text-zinc-400 font-mono text-xs">{d.slotName}</td>
+                  <tr key={`${d.slotName}-${d.childSchematicId}`} className="border-t border-slate-700">
+                    <td className="px-3 py-2 text-slate-400 font-mono text-xs">{d.slotName}</td>
                     <td className="px-3 py-2">
                       <Link
                         to={`/schematics/${d.childSchematicId}`}
@@ -270,7 +270,7 @@ export function SchematicDetail(): JSX.Element {
                       >
                         {d.childName}
                       </Link>
-                      <span className="ml-2 text-xs text-zinc-600 font-mono">
+                      <span className="ml-2 text-xs text-slate-600 font-mono">
                         {d.childSchematicId}
                       </span>
                     </td>
