@@ -310,6 +310,37 @@ export const activeSchematics = sqliteTable(
   }),
 );
 
+// ============================================================
+// Phase 4 — Personal inventory ("My Crates")
+// ============================================================
+
+// One row per (character, resource). Holds the user's owned units of a
+// resource and a status — Phase 4 Stage A treats status as user-driven
+// metadata only; auto-detection of live↔banked transitions when a
+// resource despawns is a Stage D polish. Reserved partitioning (e.g.
+// "5000 units reserved for the next T21 batch, 3000 still available")
+// is one row per stash for v1 — composite PK on (character, resource)
+// means a single row per resource per character; per-build reservation
+// becomes a separate join table when the simulator (Phase 6) lands.
+//
+// units >= 0; status is one of 'live' | 'banked' | 'reserved'. notes is
+// user free-text for "where I have this stashed" or "ear-marked for X".
+export const inventoryEntries = sqliteTable(
+  "inventory_entries",
+  {
+    characterId: text("character_id").notNull(),
+    resourceId: text("resource_id").notNull(),
+    units: integer("units").notNull().default(0),
+    status: text("status").notNull(), // 'live' | 'banked' | 'reserved'
+    notes: text("notes"),
+    addedAt: integer("added_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.characterId, t.resourceId] }),
+  }),
+);
+
 // Single-row key/value store for app-wide settings. JSON-encoded values.
 // Known keys: 'active.character', 'ui.layout', 'verdict.thresholds',
 // 'ingest.intervalHours'.

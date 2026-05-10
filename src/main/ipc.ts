@@ -6,6 +6,7 @@ import { getDb } from "../db";
 import {
   activeSchematics,
   characters,
+  inventoryEntries,
   professionPriorities,
   resourceGroups,
   resourceObservations,
@@ -27,6 +28,9 @@ import type {
   ActiveSchematicEntry,
   Character,
   CreateCharacterInput,
+  InventoryEntry,
+  InventoryStatus,
+  InventoryUpsertInput,
   ProfessionPriority,
   RefreshResult,
   Resource,
@@ -803,4 +807,152 @@ export function registerIpc(): void {
       },
     };
   });
+
+  // === Phase 4: inventory ===
+
+  // Helper: join inventory rows with their resource for display fields.
+  // Skips orphan rows (resource was deleted) defensively — they shouldn't
+  // exist normally but a future inventory-import flow could create them.
+  function hydrateInventoryRows(
+    rows: Array<typeof inventoryEntries.$inferSelect>,
+  ): InventoryEntry[] {
+    if (rows.length === 0) return [];
+    const db = getDb();
+    const resourceIds = rows.map((r) => r.resourceId);
+    const resourceRows = db
+      .select()
+      .from(resources)
+      .where(inArray(resources.id, resourceIds))
+      .all();
+    const byId = new Map(resourceRows.map((r) => [r.id, r]));
+    const out: InventoryEntry[] = [];
+    for (const inv of rows) {
+      const r = byId.get(inv.resourceId);
+      if (!r) continue;
+      out.push({
+        characterId: inv.characterId,
+        resourceId: inv.resourceId,
+        resourceName: r.name,
+        typeDisplayName: r.typeDisplayName,
+        units: inv.units,
+        status: inv.status as InventoryStatus,
+        notes: inv.notes,
+        addedAt: inv.addedAt,
+        updatedAt: inv.updatedAt,
+      });
+    }
+    return out;
+  }
+
+  ipcMain.handle(
+    "inventory:list",
+    async (_evt, characterId: string): Promise<InventoryEntry[]> => {
+      const db = getDb();
+      const rows = db
+        .select()
+        .from(inventoryEntries)
+        .where(eq(inventoryEntries.characterId, characterId))
+        .all();
+      return hydrateInventoryRows(rows).sort((a, b) =>
+        a.resourceName.localeCompare(b.resourceName),
+      );
+    },
+  );
+
+  ipcMain.handle(
+    "inventory:upsert",
+    async (_evt, input: InventoryUpsertInput): Promise<InventoryEntry> => {
+      if (input.units < 0) throw new Error("units cannot be negative");
+      if (!["live", "banked", "reserved"].includes(input.status)) {
+        throw new Error(`invalid status: ${input.status}`);
+      }
+      const db = getDb();
+      // Validate the FKs explicitly — better-sqlite3 doesn't enforce them
+      // by default and a silent insert against a missing character/resource
+      // would surface as a confusing UI bug later.
+      const char = db
+        .select()
+        .from(characters)
+        .where(eq(characters.id, input.characterId))
+        .get();
+      if (!char) throw new Error(`character not found: ${input.characterId}`);
+      const res = db.select().from(resources).where(eq(resources.id, input.resourceId)).get();
+      if (!res) throw new Error(`resource not found: ${input.resourceId}`);
+
+      const now = Date.now();
+      const existing = db
+        .select()
+        .from(inventoryEntries)
+        .where(
+          and(
+            eq(inventoryEntries.characterId, input.characterId),
+            eq(inventoryEntries.resourceId, input.resourceId),
+          ),
+        )
+        .get();
+      if (existing) {
+        db.update(inventoryEntries)
+          .set({
+            units: input.units,
+            status: input.status,
+            notes: input.notes ?? null,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(inventoryEntries.characterId, input.characterId),
+              eq(inventoryEntries.resourceId, input.resourceId),
+            ),
+          )
+          .run();
+      } else {
+        db.insert(inventoryEntries)
+          .values({
+            characterId: input.characterId,
+            resourceId: input.resourceId,
+            units: input.units,
+            status: input.status,
+            notes: input.notes ?? null,
+            addedAt: now,
+            updatedAt: now,
+          })
+          .run();
+      }
+      // Stage A: no implicit recompute yet — verdicts still use absolute
+      // thresholds. Stage C will introduce score_owned into the pipeline
+      // and recomputeForCharacter() will be wired here.
+      const hydrated = hydrateInventoryRows(
+        db
+          .select()
+          .from(inventoryEntries)
+          .where(
+            and(
+              eq(inventoryEntries.characterId, input.characterId),
+              eq(inventoryEntries.resourceId, input.resourceId),
+            ),
+          )
+          .all(),
+      );
+      if (hydrated.length === 0) {
+        throw new Error("inventory:upsert: row vanished after write");
+      }
+      return hydrated[0];
+    },
+  );
+
+  ipcMain.handle(
+    "inventory:remove",
+    async (_evt, characterId: string, resourceId: string): Promise<void> => {
+      const db = getDb();
+      db.delete(inventoryEntries)
+        .where(
+          and(
+            eq(inventoryEntries.characterId, characterId),
+            eq(inventoryEntries.resourceId, resourceId),
+          ),
+        )
+        .run();
+      // Stage C will trigger recomputeForCharacter() here.
+    },
+  );
 }

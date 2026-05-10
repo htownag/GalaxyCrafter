@@ -153,6 +153,30 @@ export interface CreateCharacterInput {
   priorities: ProfessionPriority[];
 }
 
+// === Phase 4: inventory ===
+
+export type InventoryStatus = "live" | "banked" | "reserved";
+
+export interface InventoryEntry {
+  characterId: string;
+  resourceId: string;
+  resourceName: string;
+  typeDisplayName: string;
+  units: number;
+  status: InventoryStatus;
+  notes: string | null;
+  addedAt: number;
+  updatedAt: number;
+}
+
+export interface InventoryUpsertInput {
+  characterId: string;
+  resourceId: string;
+  units: number;
+  status: InventoryStatus;
+  notes?: string | null;
+}
+
 // === Phase 3: verdicts ===
 
 export type VerdictTier = "CHASE" | "MAYBE" | "SKIP";
@@ -265,6 +289,11 @@ export interface IpcApi {
   // Phase 3 — verdicts
   listVerdicts(characterId: string): Promise<VerdictEntry[]>;
   getResourceDetail(resourceId: string): Promise<ResourceDetail | null>;
+
+  // Phase 4 — inventory
+  listInventory(characterId: string): Promise<InventoryEntry[]>;
+  upsertInventory(input: InventoryUpsertInput): Promise<InventoryEntry>;
+  removeInventory(characterId: string, resourceId: string): Promise<void>;
   /**
    * Subscribe to verdict recompute completion. Listener fires whenever any
    * mutation (snapshot refresh, active schematic add/remove, character

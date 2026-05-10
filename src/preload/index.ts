@@ -30,6 +30,12 @@ const api: IpcApi = {
   // Phase 3 — verdicts
   listVerdicts: (characterId) => ipcRenderer.invoke("verdicts:list", characterId),
   getResourceDetail: (resourceId) => ipcRenderer.invoke("resources:detail", resourceId),
+
+  // Phase 4 — inventory
+  listInventory: (characterId) => ipcRenderer.invoke("inventory:list", characterId),
+  upsertInventory: (input) => ipcRenderer.invoke("inventory:upsert", input),
+  removeInventory: (characterId, resourceId) =>
+    ipcRenderer.invoke("inventory:remove", characterId, resourceId),
   onVerdictsUpdated: (listener) => {
     const wrapped = (_evt: Electron.IpcRendererEvent, payload: { characterId: string }): void =>
       listener(payload);
