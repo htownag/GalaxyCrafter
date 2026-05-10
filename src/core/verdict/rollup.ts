@@ -3,17 +3,23 @@
 // Phase 3 uses absolute thresholds (advisor decision, transitional until
 // Phase 4 layers in delta-vs-owned):
 //
-//     score >= 90 → CHASE
-//     score >= 70 → MAYBE
+//     score >= 85 → CHASE
+//     score >= 65 → MAYBE
 //     otherwise   → SKIP   (no row written; resource isn't on the user's radar)
+//
+// Initial 90/70 yielded 1 CHASE / 12 MAYBE on Mauryll's first SR2 snapshot
+// against T21 Rifle + sub-components (484 scoreable matches) — below the
+// advisor's 5-30 CHASE / 30-100 MAYBE healthy range. Loosened to 85/65 to
+// surface more candidates. Re-tune once Phase 4's owned-best deltas land,
+// since absolute thresholds are stand-ins for true delta-vs-owned logic.
 //
 // Profession-tier gating and the secondary-downgrade rule (design report
 // §5.2.6) are deferred — they require owned-best data that lands in Phase 4.
 
 import type { ResourceVerdict, ScoredMatch } from "./types";
 
-export const CHASE_THRESHOLD = 90;
-export const MAYBE_THRESHOLD = 70;
+export const CHASE_THRESHOLD = 85;
+export const MAYBE_THRESHOLD = 65;
 
 /**
  * Build a per-resource verdict from a flat list of (schematic, property
