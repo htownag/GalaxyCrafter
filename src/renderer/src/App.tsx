@@ -10,6 +10,7 @@ const TABS = [
   { to: "/inventory", label: "Crates" },
   { to: "/finder", label: "Finder" },
   { to: "/planner", label: "Planner" },
+  { to: "/simulator", label: "Simulator" },
   { to: "/character", label: "Character" },
 ];
 

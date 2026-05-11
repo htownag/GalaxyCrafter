@@ -262,6 +262,52 @@ export interface FinderResult {
   rows: FinderResultRow[];
 }
 
+// === Phase 6: Crafting simulator ===
+
+export interface SimulatorSkillProfile {
+  assemblySkill: number;
+  experimentationSkill: number;
+  toolEffectiveness: number;
+}
+
+export interface SimulatorPredictInput {
+  schematicId: string;
+  /** v1: only "hypothetical_perfect" (every stat at 1000) is supported. Future
+   *  versions will accept per-slot resource ids from inventory / spawns. */
+  slotConfig: "hypothetical_perfect";
+  skillProfile?: SimulatorSkillProfile;
+  /** Defaults to 1 (GREATSUCCESS) — the realistic competent-crafter baseline. */
+  assemblyTier?: number;
+}
+
+export interface SimulatorPredictedGroup {
+  id: number;
+  propertyName: string | null;
+  expGroup: string | null;
+  weights: Array<{ stat: string; weight: number }>;
+  weightedSum: number; // 0..1000
+  maxPercent: number; // 0..100
+  startingPercent: number; // 0..100
+  /** Final % if ALL experimentation points dumped on this row at GREATSUCCESS. */
+  focusedPercent: number;
+}
+
+export interface SimulatorPredictResult {
+  schematic: {
+    id: string;
+    name: string;
+    profession: string | null;
+    complexity: number | null;
+  };
+  slotConfig: "hypothetical_perfect";
+  assumptions: {
+    skillProfile: SimulatorSkillProfile;
+    assemblyTier: number;
+    experimentationPointBudget: number;
+  };
+  propertyGroups: SimulatorPredictedGroup[];
+}
+
 // === Phase 7: New-player harvester planner ===
 
 export type HarvesterSize = "personal" | "medium" | "heavy";
@@ -482,6 +528,9 @@ export interface IpcApi {
 
   // Phase 7 — New-player harvester planner
   recommendHarvesters(input: PlannerInput): Promise<PlannerResult>;
+
+  // Phase 6 — Crafting simulator
+  predictManufacture(input: SimulatorPredictInput): Promise<SimulatorPredictResult | null>;
 
   // Phase 4E — GH single-resource lookup
   lookupGhResource(input: GhLookupInput): Promise<GhLookupResponse>;

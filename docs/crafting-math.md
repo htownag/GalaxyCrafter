@@ -165,9 +165,11 @@ Quadratic-in-value curve. Sample table:
 |         100 |       1.65 |         10 |
 |         500 |      11.25 |         50 |
 |         700 |      17.85 |         70 |
-|         900 |      26.55 |         90 |
+|         900 |      25.65 |         90 |
 |         940 |      27.35 |         94 |
 |        1000 |      30.00 |        100 |
+
+(Corrected 2026-05-11: the 900 row originally read `26.55` — formula gives `25.65` — caught during simulator-test pin-down of the sample table.)
 
 So with perfect 1000-stat resources, you start at 30% and need experimentation to push toward 100%.
 

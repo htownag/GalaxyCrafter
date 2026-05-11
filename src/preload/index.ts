@@ -48,6 +48,9 @@ const api: IpcApi = {
   // Phase 7 — New-player harvester planner
   recommendHarvesters: (input) => ipcRenderer.invoke("planner:recommend", input),
 
+  // Phase 6 — Crafting simulator
+  predictManufacture: (input) => ipcRenderer.invoke("simulator:predict", input),
+
   // Phase 4E — GH single-resource lookup
   lookupGhResource: (input) => ipcRenderer.invoke("gh:lookupResource", input),
   onVerdictsUpdated: (listener) => {

@@ -67,10 +67,20 @@ import {
 import { isPowerResource, powerMultiplier, resourceBucket } from "../core/planner/buckets";
 import { deploymentValue } from "../core/planner/score";
 import { allocate, type Candidate as PlannerCandidate } from "../core/planner/allocate";
+import { predictSchematic } from "../core/simulator/manufacture";
+import { hypotheticalPerfectFill } from "../core/simulator/values";
+import {
+  DEFAULT_SKILL_PROFILE,
+  type AssemblyTier,
+  type PropertyGroupInput,
+} from "../core/simulator/types";
 import type {
   PlannerInput,
   PlannerRecommendation,
   PlannerResult,
+  SimulatorPredictInput,
+  SimulatorPredictResult,
+  StatKey,
 } from "../shared/ipc-types";
 
 interface GalaxyConfig {
@@ -1843,6 +1853,10 @@ export function registerIpc(): void {
       };
     },
   );
+
+  // Wire Phase 6 simulator handlers (kept in a separate function for
+  // readability; this is the canonical mount point).
+  registerSimulatorHandlers();
 }
 
 function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResult {
@@ -1860,3 +1874,94 @@ function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResu
 // Re-exports so external callers can use these without reaching into core/planner.
 export { HARVESTERS };
 export type { PlannerBucket, PlannerSize };
+
+// === Phase 6: Crafting simulator ===
+
+export function registerSimulatorHandlers(): void {
+  ipcMain.handle(
+    "simulator:predict",
+    async (
+      _evt,
+      input: SimulatorPredictInput,
+    ): Promise<SimulatorPredictResult | null> => {
+      const db = getDb();
+      const schem = db
+        .select()
+        .from(schematics)
+        .where(eq(schematics.id, input.schematicId))
+        .get();
+      if (!schem) return null;
+
+      // Pull property groups + weights — same shape as the verdict + finder
+      // engines use, so we can reuse the simulator's PropertyGroupInput type.
+      const groupRows = db
+        .select()
+        .from(schematicPropertyGroups)
+        .where(eq(schematicPropertyGroups.schematicId, input.schematicId))
+        .all();
+      const groupIds = groupRows.map((g) => g.id);
+      const weightRows =
+        groupIds.length > 0
+          ? db
+              .select()
+              .from(schematicPropertyWeights)
+              .where(inArray(schematicPropertyWeights.groupId, groupIds))
+              .all()
+          : [];
+      const weightsByGroup = new Map<number, Array<{ stat: StatKey; weight: number }>>();
+      for (const w of weightRows) {
+        const arr = weightsByGroup.get(w.groupId) ?? [];
+        arr.push({ stat: w.stat as StatKey, weight: w.weight });
+        weightsByGroup.set(w.groupId, arr);
+      }
+      const propertyGroups: PropertyGroupInput[] = groupRows.map((g) => ({
+        id: g.id,
+        propertyName: g.propertyName,
+        expGroup: g.expGroup,
+        weights: weightsByGroup.get(g.id) ?? [],
+      }));
+
+      // v1: slot config is hypothetical-perfect. One slot fill at 1000-across-the-board,
+      // unitsRequired derived from the schematic's first raw slot (so weighted-units
+      // math behaves sensibly even though there's only one fill).
+      const rawSlots = db
+        .select()
+        .from(schematicSlots)
+        .where(
+          and(
+            eq(schematicSlots.schematicId, input.schematicId),
+            eq(schematicSlots.ingredientType, 0),
+          ),
+        )
+        .all();
+      const unitsForFill = rawSlots[0]?.unitsRequired ?? 1;
+      const slots = [hypotheticalPerfectFill(unitsForFill)];
+
+      const profile = input.skillProfile ?? DEFAULT_SKILL_PROFILE;
+      const tier = (input.assemblyTier ?? 1) as AssemblyTier;
+
+      const result = predictSchematic({
+        propertyGroups,
+        slots,
+        skillProfile: profile,
+        assemblyTier: tier,
+      });
+
+      return {
+        schematic: {
+          id: schem.id,
+          name: schem.name,
+          profession: professionForSkillGroup(schem.skillGroup),
+          complexity: schem.complexity ?? null,
+        },
+        slotConfig: "hypothetical_perfect",
+        assumptions: {
+          skillProfile: profile,
+          assemblyTier: tier,
+          experimentationPointBudget: result.experimentationPointBudget,
+        },
+        propertyGroups: result.propertyGroups,
+      };
+    },
+  );
+}
