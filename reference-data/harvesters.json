@@ -86,6 +86,17 @@
       "lots": 1,
       "installationType": 8,
       "note": "Alternate to solar — pick whichever has better resource availability on the target planet."
+    },
+    {
+      "id": "fusion_radioactive",
+      "label": "Fusion Power Generator",
+      "size": "heavy",
+      "bucket": "mineral",
+      "ber": 12,
+      "hopper": 150000,
+      "lots": 1,
+      "installationType": 9,
+      "note": "Specialised radioactive extractor. Only used in 'Build power reserves' mode when the target resource is radioactive — strictly better BER than a Heavy Mineral Installation (12 vs 7) for that one resource class."
     }
   ]
 }

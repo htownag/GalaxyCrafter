@@ -64,7 +64,7 @@ import {
   type HarvesterSize as PlannerSize,
   harvesterFor,
 } from "../core/planner/harvesters";
-import { resourceBucket } from "../core/planner/buckets";
+import { isPowerResource, powerMultiplier, resourceBucket } from "../core/planner/buckets";
 import { deploymentValue } from "../core/planner/score";
 import { allocate, type Candidate as PlannerCandidate } from "../core/planner/allocate";
 import type {
@@ -1730,26 +1730,41 @@ export function registerIpc(): void {
         const bucket = resourceBucket(ancestors);
         if (!bucket) continue;
 
-        // Power-mode: score by PE/10. Resources without a PE stat (e.g. some
-        // pure minerals) are filtered out. Normal mode: read from scoreFor map.
+        // Power mode: restrict to resources that Core3 actually accepts as
+        // power (isEnergy() = true): only 'energy' (wind/solar) OR
+        // 'radioactive' (a mineral subtype). Everything else is filtered out.
+        // Score = PE itself (UI sees the raw resource quality). Harvester
+        // override: radioactives use the fusion generator (BER 12) instead of
+        // a generic mineral installation (BER 7) because it's strictly better
+        // for that one resource class.
         let score: number;
+        let harvester = harvesterFor("heavy", bucket);
+        let estDailyYield = 0;
+
         if (powerMode) {
-          if (r.pe === null || r.pe <= 0) continue;
-          score = r.pe / 10;
+          if (!isPowerResource(ancestors)) continue;
+          const pe = r.pe ?? 0;
+          if (pe <= 0) continue;
+          score = pe; // raw PE 0..1000 displayed; multiplier baked into yield
+          if (ancestors.has("radioactive")) {
+            harvester = HARVESTERS.find((h) => h.id === "fusion_radioactive") ?? harvester;
+          }
+          if (!harvester) continue;
+          // Daily yield in power units = max(1, PE/500) × extracted units/day.
+          const mult = powerMultiplier(pe);
+          estDailyYield = mult * (p.concentration / 100) * harvester.ber * 24;
         } else {
           score = scoreFor.get(r.id) ?? 0;
           if (score <= 0) continue;
+          if (!harvester) continue;
+          estDailyYield = (p.concentration / 100) * harvester.ber * 24;
         }
 
-        const harvester = harvesterFor("heavy", bucket);
-        if (!harvester) continue;
-
         const dv = deploymentValue({
-          resourceScore: score,
+          resourceScore: powerMode ? score / 10 : score, // normalize PE to 0..100 scale for sort
           concentrationPct: p.concentration,
           ber: harvester.ber,
         });
-        const estDailyYield = (p.concentration / 100) * harvester.ber * 24;
 
         candidates.push({
           resourceId: r.id,
@@ -1760,6 +1775,8 @@ export function registerIpc(): void {
           bucket,
           size: harvester.size,
           ber: harvester.ber,
+          harvesterId: harvester.id,
+          harvesterLabel: harvester.label,
           deploymentValue: dv,
           estDailyYield,
         });
@@ -1771,22 +1788,19 @@ export function registerIpc(): void {
         diversity: input.diversity,
       });
 
-      const recommendations: PlannerRecommendation[] = result.selected.map((c) => {
-        const harv = harvesterFor(c.size, c.bucket);
-        return {
-          rank: c.rank,
-          resourceId: c.resourceId,
-          resourceName: c.resourceName,
-          bucket: c.bucket,
-          size: c.size,
-          harvesterLabel: harv?.label ?? `${c.size} ${c.bucket}`,
-          planet: c.planet,
-          concentrationPct: c.concentrationPct,
-          resourceScore: c.resourceScore,
-          deploymentValue: c.deploymentValue,
-          estDailyYield: c.estDailyYield,
-        };
-      });
+      const recommendations: PlannerRecommendation[] = result.selected.map((c) => ({
+        rank: c.rank,
+        resourceId: c.resourceId,
+        resourceName: c.resourceName,
+        bucket: c.bucket,
+        size: c.size,
+        harvesterLabel: c.harvesterLabel,
+        planet: c.planet,
+        concentrationPct: c.concentrationPct,
+        resourceScore: c.resourceScore,
+        deploymentValue: c.deploymentValue,
+        estDailyYield: c.estDailyYield,
+      }));
 
       return {
         recommendations,

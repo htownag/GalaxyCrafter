@@ -10,9 +10,11 @@ function cand(opts: Partial<Candidate> & { id: string; dv: number }): Candidate 
     resourceScore: opts.resourceScore ?? 90,
     bucket: opts.bucket ?? "mineral",
     size: opts.size ?? "heavy",
-    ber: opts.ber ?? 16,
+    ber: opts.ber ?? 7,
+    harvesterId: opts.harvesterId ?? "heavy_mineral",
+    harvesterLabel: opts.harvesterLabel ?? "Heavy Mineral",
     deploymentValue: opts.dv,
-    estDailyYield: 30000,
+    estDailyYield: opts.estDailyYield ?? 12000,
   };
 }
 

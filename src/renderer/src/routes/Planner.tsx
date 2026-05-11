@@ -152,8 +152,9 @@ export function Planner(): JSX.Element {
               Build power reserves (rank by PE)
             </label>
             <p className="text-[11px] text-slate-500 mt-1 ml-6 leading-tight">
-              Surfaces high-Potential-Energy resources for fueling power generators
-              (radioactives, petrochem fuels, solar/wind). Overrides profession scoring.
+              Surfaces only resources that actually power installations on Core3 / SR2: solar,
+              wind, and radioactive. Petrochem fuels are NOT power-eligible despite high PE.
+              Recommends a Fusion Power Generator for radioactives.
             </p>
           </InputCard>
 
@@ -222,11 +223,12 @@ export function Planner(): JSX.Element {
 
           {result?.fallbackMode === "power-reserves" && (
             <div className="mb-4 p-3 rounded-md border border-purple-800 bg-purple-950/30 text-purple-200 text-sm">
-              <strong className="font-semibold">Power-reserves mode.</strong> Ranked by PE
-              (Potential Energy) instead of profession scoring. Pick a Heavy Mineral Extractor on
-              radioactives, Heavy Chemical Extractor on petrochem fuels, or Solar/Wind Generator on
-              high-PE energy spawns — these resources feed your fusion / photo-bio generators or
-              run wind/solar power directly.
+              <strong className="font-semibold">Power-reserves mode.</strong> Only two resource
+              classes power installations on SR2: <em>energy</em> (solar + wind) and{" "}
+              <em>radioactive</em> (a mineral subtype). Score column is PE — Core3 formula is{" "}
+              <code className="text-[11px]">power = max(1, PE/500) × units</code>, so PE ≥ 500
+              gives bonus power per unit. The fusion generator is the recommended harvester for
+              radioactives (BER 12, beats a generic heavy mineral installation at 7).
             </div>
           )}
 

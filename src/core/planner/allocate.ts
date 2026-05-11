@@ -12,12 +12,17 @@ export interface Candidate {
   resourceName: string;
   planet: string;
   concentrationPct: number;
-  resourceScore: number; // 0..100
+  resourceScore: number; // 0..100 in normal mode; raw PE 0..1000 in power mode
   bucket: HarvesterBucket;
   size: HarvesterSize;
   ber: number;
+  /** Harvester catalogue id picked for this candidate. Carries through to the
+   * UI label — important for fusion-generator picks where the harvester
+   * differs from the bucket's generic heavy. */
+  harvesterId: string;
+  harvesterLabel: string;
   deploymentValue: number; // pre-computed via score.ts
-  estDailyYield: number; // BER × conc × 24 (no score weighting; for UI)
+  estDailyYield: number; // power units/day in power mode; raw units/day otherwise
 }
 
 export interface AllocateInput {
