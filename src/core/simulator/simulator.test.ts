@@ -8,7 +8,7 @@ import {
   experimentationValueModifier,
   focusedExperimentation,
 } from "./experiment";
-import { predictSchematic } from "./manufacture";
+import { interpolateValue, predictSchematic } from "./manufacture";
 import { ASSEMBLY_TIER } from "./types";
 import { getWeightedValue, hypotheticalPerfectFill } from "./values";
 
@@ -101,6 +101,27 @@ describe("focusedExperimentation — dump all points one row", () => {
     // 3 points GS = +21. start 27.35 + 21 = 48.35. cap 94 not reached.
     const result = focusedExperimentation(0.2735, 0.94, 3);
     expect(result).toBeCloseTo(0.4835);
+  });
+});
+
+describe("interpolateValue — final-value math", () => {
+  it("linear at standard direction (min 100, max 500, 50%)", () => {
+    expect(interpolateValue(50, 100, 500)).toBeCloseTo(300);
+  });
+  it("hits min at 0%", () => {
+    expect(interpolateValue(0, 100, 500)).toBeCloseTo(100);
+  });
+  it("hits max at 100%", () => {
+    expect(interpolateValue(100, 100, 500)).toBeCloseTo(500);
+  });
+  it("works for inverted properties (min > max)", () => {
+    // attackspeed: 4.6 (slow) → 3.1 (fast). 50% → 3.85
+    expect(interpolateValue(50, 4.6, 3.1)).toBeCloseTo(3.85);
+  });
+  it("returns null when either bound is null", () => {
+    expect(interpolateValue(50, null, 500)).toBeNull();
+    expect(interpolateValue(50, 100, null)).toBeNull();
+    expect(interpolateValue(50, null, null)).toBeNull();
   });
 });
 
@@ -228,6 +249,76 @@ describe("predictSchematic — end-to-end ceiling read", () => {
       ],
     });
     expect(result.propertyGroups[0].weightedSum).toBeCloseTo(800);
+  });
+
+  it("real-value interpolation for a standard property (mindamage 11..20)", () => {
+    const slots = [hypotheticalPerfectFill()];
+    const result = predictSchematic({
+      slots,
+      propertyGroups: [
+        {
+          id: 1,
+          propertyName: "mindamage",
+          expGroup: "expDamage",
+          weights: [{ stat: "SR", weight: 1 }],
+          expMin: 11,
+          expMax: 20,
+          expPrecision: 0,
+          inverted: false,
+        },
+      ],
+    });
+    const g = result.propertyGroups[0];
+    // Perfect resources → focused% = 100%. So focusedValue = 11 + (20-11) × 1 = 20.
+    expect(g.focusedValue).toBeCloseTo(20);
+    // startingPercent on 1000 weightedSum = 30. startingValue = 11 + (20-11) × 0.30 = 13.7.
+    expect(g.startingValue).toBeCloseTo(13.7);
+  });
+
+  it("inverted property interpolation (attackspeed 4.6..3.1)", () => {
+    const slots = [hypotheticalPerfectFill()];
+    const result = predictSchematic({
+      slots,
+      propertyGroups: [
+        {
+          id: 1,
+          propertyName: "attackspeed",
+          expGroup: "expDamage",
+          weights: [{ stat: "SR", weight: 1 }],
+          expMin: 4.6,
+          expMax: 3.1,
+          expPrecision: 1,
+          inverted: true,
+        },
+      ],
+    });
+    const g = result.propertyGroups[0];
+    // Perfect → focused% 100% → 4.6 + (3.1-4.6) × 1 = 3.1 (fastest)
+    expect(g.focusedValue).toBeCloseTo(3.1);
+    // Start 30% → 4.6 + (3.1-4.6) × 0.30 = 4.15 (slower)
+    expect(g.startingValue).toBeCloseTo(4.15);
+    expect(g.inverted).toBe(true);
+  });
+
+  it("returns null final values when range data is absent", () => {
+    const slots = [hypotheticalPerfectFill()];
+    const result = predictSchematic({
+      slots,
+      propertyGroups: [
+        {
+          id: 1,
+          propertyName: "mindamage",
+          expGroup: "expDamage",
+          weights: [{ stat: "SR", weight: 1 }],
+          // no expMin/expMax provided
+        },
+      ],
+    });
+    const g = result.propertyGroups[0];
+    expect(g.focusedValue).toBeNull();
+    expect(g.startingValue).toBeNull();
+    // Percentages still computed.
+    expect(g.focusedPercent).toBeCloseTo(100);
   });
 
   it("BARELYSUCCESSFUL assembly tier scales starting% by 0.4", () => {

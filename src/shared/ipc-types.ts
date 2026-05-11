@@ -335,6 +335,19 @@ export interface SimulatorPredictedGroup {
   startingPercent: number; // 0..100
   /** Final % if ALL experimentation points dumped on this row at GREATSUCCESS. */
   focusedPercent: number;
+  // Real-world value projection. Null when the schematic-experimental-ranges
+  // join didn't find a range (mostly non-craftable items + some legacy schems).
+  /** Authored min/max from SR2's template Lua. May be reversed (min > max)
+   *  for properties where lower is better — see `inverted`. */
+  expMin: number | null;
+  expMax: number | null;
+  /** Decimal places to display (attackspeed = 1, mindamage = 0). */
+  expPrecision: number | null;
+  /** True when min > max → lower is better. */
+  inverted: boolean | null;
+  /** Interpolated value at startingPercent / focusedPercent, in real units. */
+  startingValue: number | null;
+  focusedValue: number | null;
 }
 
 export interface SimulatorPredictResult {

@@ -7,6 +7,26 @@
 
 import { startingPercent } from "./assembly";
 import { focusedExperimentation } from "./experiment";
+
+/**
+ * Interpolate a real-world stat value from a percentage (0..100) given the
+ * schematic's authored min/max range. Returns null when range data is absent.
+ *
+ * The formula is the same regardless of inversion direction: when min > max
+ * (inverted properties like attackspeed 4.6→3.1), increasing percentage
+ * moves the value from min toward max. The caller is responsible for
+ * understanding that "max" means "best" not "highest."
+ *
+ *   finalValue = min + (max - min) × percent/100
+ */
+export function interpolateValue(
+  percent: number,
+  min: number | null,
+  max: number | null,
+): number | null {
+  if (min === null || max === null) return null;
+  return min + (max - min) * (percent / 100);
+}
 import {
   ASSEMBLY_TIER,
   DEFAULT_SKILL_PROFILE,
@@ -48,6 +68,11 @@ export function predictSchematic(args: PredictSchematicArgs): PredictSchematicRe
   const expBudget = Math.floor(profile.experimentationSkill / 10);
 
   const groups: PredictedPropertyGroup[] = args.propertyGroups.map((g) => {
+    const expMin = g.expMin ?? null;
+    const expMax = g.expMax ?? null;
+    const expPrecision = g.expPrecision ?? null;
+    const inverted = g.inverted ?? null;
+
     const totalWeight = g.weights.reduce((s, w) => s + w.weight, 0);
     if (totalWeight === 0) {
       // Non-scoreable group (no weights). Echo it back with zeros so callers
@@ -61,6 +86,12 @@ export function predictSchematic(args: PredictSchematicArgs): PredictSchematicRe
         maxPercent: 0,
         startingPercent: 0,
         focusedPercent: 0,
+        expMin,
+        expMax,
+        expPrecision,
+        inverted,
+        startingValue: null,
+        focusedValue: null,
       };
     }
 
@@ -83,6 +114,12 @@ export function predictSchematic(args: PredictSchematicArgs): PredictSchematicRe
       maxPercent: maxPct,
       startingPercent: start,
       focusedPercent: focused,
+      expMin,
+      expMax,
+      expPrecision,
+      inverted,
+      startingValue: interpolateValue(start, expMin, expMax),
+      focusedValue: interpolateValue(focused, expMin, expMax),
     };
   });
 

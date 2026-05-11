@@ -1923,6 +1923,10 @@ export function registerSimulatorHandlers(): void {
         propertyName: g.propertyName,
         expGroup: g.expGroup,
         weights: weightsByGroup.get(g.id) ?? [],
+        expMin: g.expMin,
+        expMax: g.expMax,
+        expPrecision: g.expPrecision,
+        inverted: g.inverted,
       }));
 
       // All slots on this schematic — both raw resource (ingredientType=0)

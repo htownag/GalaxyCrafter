@@ -36,6 +36,14 @@ export interface PropertyGroupInput {
   propertyName: string | null; // e.g. 'mindamage'; null for non-experimental
   expGroup: string | null; // e.g. 'expDamage'
   weights: WeightEntry[];
+  /** Final-value range from SR2 template Lua. Null when not available
+   *  (non-experimental groups, or experimental data not joined for this id). */
+  expMin?: number | null;
+  expMax?: number | null;
+  /** Decimal places to display (e.g. attackspeed wants 1, mindamage wants 0). */
+  expPrecision?: number | null;
+  /** True when min > max — lower is better (attackspeed, attack costs). */
+  inverted?: boolean | null;
 }
 
 /**
@@ -108,6 +116,19 @@ export interface PredictedPropertyGroup {
    * The ceiling for "what this row can be."
    */
   focusedPercent: number;
+
+  // Final-value projections (in real in-game units), driven by the SR2
+  // template Lua's experimentalMin/Max. Null when no range was joined.
+  /** The schematic's value range for this property, lowest to highest as
+   *  authored (inverted=true means min > max). */
+  expMin: number | null;
+  expMax: number | null;
+  expPrecision: number | null;
+  inverted: boolean | null;
+  /** Real-world value of this property when the percentage = startingPercent. */
+  startingValue: number | null;
+  /** Real-world value at focusedPercent (ceiling-if-focused). */
+  focusedValue: number | null;
 }
 
 export interface PredictManufactureInput {

@@ -4,6 +4,7 @@ import type {
   ActiveSchematicEntry,
   ResourceStats,
   SchematicSummary,
+  SimulatorPredictedGroup,
   SimulatorPredictResult,
   SimulatorSkillProfile,
   SimulatorSlotChoice,
@@ -301,58 +302,11 @@ export function Simulator(): JSX.Element {
               )}
 
               {result.propertyGroups.some((g) => g.weightedSum > 0) && (
-                <div className="overflow-x-auto rounded-md border border-slate-700">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-800 text-slate-300">
-                      <tr>
-                        <th className="px-2 py-2 text-left font-medium">Property</th>
-                        <th className="px-2 py-2 text-left font-medium">Group</th>
-                        <th className="px-2 py-2 text-left font-medium">Weights</th>
-                        <th className="px-2 py-2 text-right font-medium" title="Σ stat × percentage, 0..1000">
-                          Weighted sum
-                        </th>
-                        <th className="px-2 py-2 text-right font-medium" title="weightedSum / 10. Ceiling.">
-                          Max %
-                        </th>
-                        <th className="px-2 py-2 text-right font-medium" title="getAssemblyPercentage × tier modifier">
-                          Start %
-                        </th>
-                        <th className="px-2 py-2 text-right font-medium" title="Start + all exp points at GREATSUCCESS, clamped to Max">
-                          Focused %
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.propertyGroups
-                        .filter((g) => g.weightedSum > 0)
-                        .map((g) => (
-                          <tr key={g.id} className="border-t border-slate-700 hover:bg-slate-900/50">
-                            <td className="px-2 py-1.5 text-slate-100">
-                              {g.propertyName ?? "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-slate-400 text-xs font-mono">
-                              {g.expGroup ?? "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-[11px] text-slate-400">
-                              {g.weights.map((w) => `${w.stat}×${w.weight}`).join(" ")}
-                            </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-300">
-                              {Math.round(g.weightedSum)}
-                            </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-300">
-                              {g.maxPercent.toFixed(1)}
-                            </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-amber-300">
-                              {g.startingPercent.toFixed(1)}
-                            </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-emerald-300 font-medium">
-                              {g.focusedPercent.toFixed(1)}
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
+                <FinalStatsPanel groups={result.propertyGroups.filter((g) => g.weightedSum > 0)} />
+              )}
+
+              {result.propertyGroups.some((g) => g.weightedSum > 0) && (
+                <CalculationDetailsPanel groups={result.propertyGroups.filter((g) => g.weightedSum > 0)} />
               )}
 
               {result.propertyGroups.some((g) => g.weightedSum === 0 && g.weights.length === 0) && (
@@ -602,6 +556,190 @@ function shortRef(s: string): string {
   if (!s.includes("/")) return s;
   const last = s.split("/").pop() ?? s;
   return last.replace(/\.iff$/, "");
+}
+
+/** Title-case + de-snake the in-engine property name for display.
+ *  mindamage -> Min Damage, attackhealthcost -> Attack Health Cost. */
+function humanProperty(name: string | null): string {
+  if (!name) return "—";
+  const splits: Record<string, string> = {
+    mindamage: "Min Damage",
+    maxdamage: "Max Damage",
+    attackspeed: "Attack Speed",
+    woundchance: "Wound Chance",
+    hitpoints: "Hit Points",
+    zerorangemod: "Zero-Range Mod",
+    midrangemod: "Mid-Range Mod",
+    maxrangemod: "Max-Range Mod",
+    midrange: "Mid Range",
+    maxrange: "Max Range",
+    attackhealthcost: "Health Cost / Attack",
+    attackactioncost: "Action Cost / Attack",
+    attackmindcost: "Mind Cost / Attack",
+    armor_effectiveness: "Armor Effectiveness",
+    armor_health_encumbrance: "Health Encumbrance",
+    armor_action_encumbrance: "Action Encumbrance",
+    armor_mind_encumbrance: "Mind Encumbrance",
+    extractrate: "Extraction Rate (BER)",
+    hoppersize: "Hopper Size",
+    decayRate: "Decay Rate",
+  };
+  if (splits[name]) return splits[name];
+  // Fallback: title case the words
+  return name
+    .replace(/[_-]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Format a number with N decimal places, then trim trailing zeros if dec>0. */
+function fmtValue(v: number | null, precision: number | null): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  const p = Math.max(0, precision ?? 0);
+  return v.toFixed(p);
+}
+
+function FinalStatsPanel({
+  groups,
+}: {
+  groups: SimulatorPredictedGroup[];
+}): JSX.Element {
+  const withRanges = groups.filter((g) => g.expMin !== null && g.expMax !== null);
+  const noRanges = groups.length > 0 && withRanges.length === 0;
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <h4 className="text-sm font-medium text-slate-200">Predicted final item stats</h4>
+        <span className="text-[11px] text-slate-500">
+          Real in-game values (interpolated by focused %)
+        </span>
+      </div>
+
+      {noRanges && (
+        <p className="text-[11px] text-slate-500 mb-2">
+          No experimental range data joined for this schematic — only percentage-of-cap
+          predictions are available below.
+        </p>
+      )}
+
+      {withRanges.length > 0 && (
+        <div className="overflow-x-auto rounded-md border border-slate-700">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-800 text-slate-300">
+              <tr>
+                <th className="px-2 py-2 text-left font-medium">Property</th>
+                <th className="px-2 py-2 text-right font-medium" title="Authored min..max from the SR2 template Lua. When min > max, lower is better.">
+                  Range
+                </th>
+                <th className="px-2 py-2 text-right font-medium" title="Value right after assembly, pre-experimentation.">
+                  Start
+                </th>
+                <th className="px-2 py-2 text-right font-medium" title="Value if all experimentation points dump on this row (ceiling-if-focused).">
+                  Focused
+                </th>
+                <th className="px-2 py-2 text-right font-medium">% of max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {withRanges.map((g) => (
+                <tr key={g.id} className="border-t border-slate-700 hover:bg-slate-900/50">
+                  <td className="px-2 py-1.5">
+                    <span className="text-slate-100">{humanProperty(g.propertyName)}</span>
+                    {g.inverted && (
+                      <span
+                        className="ml-1.5 text-[10px] font-mono text-amber-400"
+                        title="Lower is better"
+                      >
+                        ↓
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-400 text-xs">
+                    {fmtValue(g.expMin, g.expPrecision)}..{fmtValue(g.expMax, g.expPrecision)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-amber-300">
+                    {fmtValue(g.startingValue, g.expPrecision)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-emerald-300 font-medium">
+                    {fmtValue(g.focusedValue, g.expPrecision)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 text-xs">
+                    {g.focusedPercent.toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalculationDetailsPanel({
+  groups,
+}: {
+  groups: SimulatorPredictedGroup[];
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="rounded-md border border-slate-700 bg-slate-900 overflow-hidden"
+      open={open}
+    >
+      <summary
+        className="cursor-pointer select-none px-3 py-2 text-xs text-slate-400 hover:text-slate-200"
+        onClick={(e) => {
+          e.preventDefault();
+          setOpen((v) => !v);
+        }}
+      >
+        Calculation details (weighted sum, max %, start %, focused %)
+      </summary>
+      {open && (
+        <div className="border-t border-slate-700 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-800 text-slate-300">
+              <tr>
+                <th className="px-2 py-2 text-left font-medium">Property</th>
+                <th className="px-2 py-2 text-left font-medium">Group</th>
+                <th className="px-2 py-2 text-left font-medium">Weights</th>
+                <th className="px-2 py-2 text-right font-medium">Weighted sum</th>
+                <th className="px-2 py-2 text-right font-medium">Max %</th>
+                <th className="px-2 py-2 text-right font-medium">Start %</th>
+                <th className="px-2 py-2 text-right font-medium">Focused %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => (
+                <tr key={g.id} className="border-t border-slate-700">
+                  <td className="px-2 py-1.5 text-slate-100">{humanProperty(g.propertyName)}</td>
+                  <td className="px-2 py-1.5 text-slate-400 text-xs font-mono">
+                    {g.expGroup ?? "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-[11px] text-slate-400">
+                    {g.weights.map((w) => `${w.stat}×${w.weight}`).join(" ")}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-300">
+                    {Math.round(g.weightedSum)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-300">
+                    {g.maxPercent.toFixed(1)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-amber-300">
+                    {g.startingPercent.toFixed(1)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-emerald-300">
+                    {g.focusedPercent.toFixed(1)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </details>
+  );
 }
 
 /** Human-format a slot key like "frame_assembly" → "Frame Assembly". */

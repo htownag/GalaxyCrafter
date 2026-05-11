@@ -143,12 +143,25 @@ export const schematicSlots = sqliteTable(
 
 // Experimental property groups per schematic. Source: GH seedData/tSchematicQualities.txt.
 // Rows with propertyName=null are derived attributes the player can't experiment on directly.
+//
+// expMin/expMax/expPrecision/inverted are joined in from SR2's template Lua
+// (reference-data/schematic-experimental-ranges.json, extracted from
+// ~/workspace/srswgemu2/MMOCoreORB/bin/scripts/object/*.lua via
+// scripts/extract-experimental-ranges.mjs). Used by the crafting simulator to
+// convert the engine's percentage-of-cap output into in-game stat values.
+//
+// `inverted` is true for properties where lower is better (attackspeed,
+// attack costs) — detected by min > max in the source data.
 export const schematicPropertyGroups = sqliteTable("schematic_property_groups", {
   id: integer("id").primaryKey(), // 101120 — preserved from GH auto-id; joins to weights
   schematicId: text("schematic_id").notNull(),
   propertyName: text("property_name"), // 'mindamage', 'hitpoints'; null for non-experimental
   expGroup: text("exp_group"), // 'expDamage', 'expEffeciency', 'exp_durability', 'expRange'
   weightTotal: integer("weight_total").notNull().default(0),
+  expMin: real("exp_min"), // Final-value range minimum from SR2 template; null when not weighted
+  expMax: real("exp_max"),
+  expPrecision: integer("exp_precision"), // Decimal places to display
+  inverted: integer("inverted", { mode: "boolean" }), // true = lower is better
 });
 
 // Per-stat weight for each property group. Source: GH seedData/tSchematicResWeights.txt.

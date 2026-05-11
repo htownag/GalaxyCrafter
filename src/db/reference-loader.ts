@@ -193,11 +193,38 @@ function loadResourceTypes(appRoot: string): void {
   markLoaded("resource-types", hash, parsed.types.length + groupsList.length + validEdges.length);
 }
 
+interface ExperimentalRange {
+  groupTitle: string | null;
+  min: number;
+  max: number;
+  precision: number;
+  combineType: number;
+  inverted: boolean;
+}
+
+interface ExperimentalRangesJson {
+  provenance: { source: string; extractedAt: string; schematicCount: number };
+  ranges: Record<string, Record<string, ExperimentalRange>>;
+}
+
 function loadSchematics(appRoot: string): void {
   const filePath = path.join(appRoot, "reference-data", "schematics.json");
   const raw = readFileSync(filePath, "utf8");
   const hash = sha256(raw);
-  if (!isStale("schematics", hash)) {
+
+  // Also hash the experimental ranges file so a change there forces a reload too.
+  const rangesPath = path.join(appRoot, "reference-data", "schematic-experimental-ranges.json");
+  let rangesRaw = "";
+  let rangesData: ExperimentalRangesJson["ranges"] = {};
+  try {
+    rangesRaw = readFileSync(rangesPath, "utf8");
+    rangesData = (JSON.parse(rangesRaw) as ExperimentalRangesJson).ranges;
+  } catch {
+    console.log("[ref] schematic-experimental-ranges.json not found — predicted final values unavailable");
+  }
+  const combinedHash = sha256(raw + rangesRaw);
+
+  if (!isStale("schematics", combinedHash)) {
     console.log("[ref] schematics up to date — skipping reload");
     return;
   }
@@ -209,6 +236,11 @@ function loadSchematics(appRoot: string): void {
   console.log(
     `[ref] loading ${parsed.schematics.length} schematics + ${parsed.dependencies.length} dep edges (source: ${parsed.provenance.sourceCommit})`,
   );
+  if (rangesRaw) {
+    console.log(
+      `[ref] joining experimental ranges for ${Object.keys(rangesData).length} schematics`,
+    );
+  }
   const db = getDb();
   db.transaction((tx) => {
     tx.delete(schematicPropertyWeights).run();
@@ -248,7 +280,9 @@ function loadSchematics(appRoot: string): void {
           .run();
       }
 
+      const schemRanges = rangesData[s.id] ?? {};
       for (const g of s.propertyGroups) {
+        const range = g.propertyName ? schemRanges[g.propertyName] : undefined;
         tx.insert(schematicPropertyGroups)
           .values({
             id: g.id,
@@ -256,6 +290,10 @@ function loadSchematics(appRoot: string): void {
             propertyName: g.propertyName,
             expGroup: g.expGroup,
             weightTotal: g.weightTotal,
+            expMin: range?.min ?? null,
+            expMax: range?.max ?? null,
+            expPrecision: range?.precision ?? null,
+            inverted: range?.inverted ?? null,
           })
           .run();
         for (const w of g.weights) {
@@ -276,7 +314,7 @@ function loadSchematics(appRoot: string): void {
         .run();
     }
   });
-  markLoaded("schematics", hash, parsed.schematics.length);
+  markLoaded("schematics", combinedHash, parsed.schematics.length);
 }
 
 /**
