@@ -73,6 +73,8 @@ import {
   DEFAULT_SKILL_PROFILE,
   type AssemblyTier,
   type PropertyGroupInput,
+  type ResourceStatsVector,
+  type SlotFill,
 } from "../core/simulator/types";
 import type {
   PlannerInput,
@@ -80,6 +82,9 @@ import type {
   PlannerResult,
   SimulatorPredictInput,
   SimulatorPredictResult,
+  SimulatorSlotChoice,
+  SimulatorSlotInfo,
+  SimulatorSlotOption,
   StatKey,
 } from "../shared/ipc-types";
 
@@ -1892,8 +1897,7 @@ export function registerSimulatorHandlers(): void {
         .get();
       if (!schem) return null;
 
-      // Pull property groups + weights — same shape as the verdict + finder
-      // engines use, so we can reuse the simulator's PropertyGroupInput type.
+      // Property groups + weights (unchanged from v1).
       const groupRows = db
         .select()
         .from(schematicPropertyGroups)
@@ -1921,9 +1925,7 @@ export function registerSimulatorHandlers(): void {
         weights: weightsByGroup.get(g.id) ?? [],
       }));
 
-      // v1: slot config is hypothetical-perfect. One slot fill at 1000-across-the-board,
-      // unitsRequired derived from the schematic's first raw slot (so weighted-units
-      // math behaves sensibly even though there's only one fill).
+      // Raw slots on this schematic.
       const rawSlots = db
         .select()
         .from(schematicSlots)
@@ -1934,8 +1936,150 @@ export function registerSimulatorHandlers(): void {
           ),
         )
         .all();
-      const unitsForFill = rawSlots[0]?.unitsRequired ?? 1;
-      const slots = [hypotheticalPerfectFill(unitsForFill)];
+
+      // Resolve owned + spawn fit options per slot. We need:
+      //   1. All resources that could possibly fit ANY of these slots, with their stats.
+      //   2. Type-ancestor map for those resources' types, for compat checks.
+      //   3. The character's inventory (live status only — despawned excluded).
+      //   4. The current snapshot's resources, joined to the resources table.
+      //
+      // We pull the union of relevant resources in one query rather than
+      // per-slot to keep it cheap.
+      const activeCharId = getSetting("active.character");
+      const character = activeCharId
+        ? db.select().from(characters).where(eq(characters.id, activeCharId)).get()
+        : null;
+      const galaxyId = character?.galaxyId ?? null;
+
+      const latestSnapshot = galaxyId
+        ? db
+            .select()
+            .from(snapshots)
+            .where(eq(snapshots.galaxyId, galaxyId))
+            .orderBy(desc(snapshots.fetchedAt))
+            .limit(1)
+            .get()
+        : null;
+
+      // 1. All currently-spawning resource ids (for this snapshot) — bounded by snapshot.
+      const spawnObsRows = latestSnapshot
+        ? db
+            .select()
+            .from(resourceObservations)
+            .where(eq(resourceObservations.snapshotId, latestSnapshot.id))
+            .all()
+        : [];
+      const spawnIds = new Set(spawnObsRows.map((o) => o.resourceId));
+
+      // 2. Inventory (live only) for the active character.
+      const invRows = activeCharId
+        ? db
+            .select()
+            .from(inventoryEntries)
+            .where(
+              and(
+                eq(inventoryEntries.characterId, activeCharId),
+                eq(inventoryEntries.status, "live"),
+              ),
+            )
+            .all()
+        : [];
+      const invByResource = new Map(invRows.map((r) => [r.resourceId, r]));
+
+      // 3. Union of resource ids to load: spawn ∪ inventory.
+      const allResIds = Array.from(new Set([...spawnIds, ...invRows.map((r) => r.resourceId)]));
+      const resourceRows =
+        allResIds.length > 0
+          ? db.select().from(resources).where(inArray(resources.id, allResIds)).all()
+          : [];
+      const resourceById = new Map(resourceRows.map((r) => [r.id, r]));
+
+      // 4. Type-ancestor map for compat checks. Only the types we actually see.
+      const typeIds = Array.from(new Set(resourceRows.map((r) => r.typeId)));
+      const tgEdges =
+        typeIds.length > 0
+          ? db
+              .select()
+              .from(resourceTypeGroups)
+              .where(inArray(resourceTypeGroups.typeId, typeIds))
+              .all()
+          : [];
+      const typeAncestors = buildTypeAncestorMap(tgEdges);
+
+      // 5. Type display names for nicer dropdown labels.
+      const typeRows =
+        typeIds.length > 0
+          ? db.select().from(resourceTypes).where(inArray(resourceTypes.id, typeIds)).all()
+          : [];
+      const typeNameById = new Map(typeRows.map((t) => [t.id, t.displayName]));
+
+      // Build per-slot fit options.
+      const slotInfos: SimulatorSlotInfo[] = rawSlots.map((slot) => {
+        const ownedOptions: SimulatorSlotOption[] = [];
+        const spawnOptions: SimulatorSlotOption[] = [];
+
+        for (const r of resourceRows) {
+          const fits = resourceTypeFitsRawSlot(r.typeId, slot.ingredientObject, typeAncestors);
+          if (!fits) continue;
+          const opt: SimulatorSlotOption = {
+            resourceId: r.id,
+            resourceName: r.name,
+            source: invByResource.has(r.id) ? "owned" : "spawn",
+            ownedUnits: invByResource.get(r.id)?.unitsOnHand ?? undefined,
+            oq: r.oq,
+            typeDisplayName: typeNameById.get(r.typeId) ?? r.typeId,
+          };
+          if (opt.source === "owned") ownedOptions.push(opt);
+          if (spawnIds.has(r.id)) spawnOptions.push({ ...opt, source: "spawn" });
+        }
+        ownedOptions.sort((a, b) => a.resourceName.localeCompare(b.resourceName));
+        spawnOptions.sort((a, b) => a.resourceName.localeCompare(b.resourceName));
+
+        // Resolve the user's choice (or default to perfect).
+        const userChoice: SimulatorSlotChoice | undefined = input.slotChoices?.[slot.slotName];
+        let chosen: SimulatorSlotInfo["chosen"];
+        if (userChoice?.type === "resource") {
+          const r = resourceById.get(userChoice.resourceId);
+          chosen = r
+            ? { type: "resource", resourceId: r.id, resourceName: r.name }
+            : { type: "hypothetical_perfect" };
+        } else {
+          chosen = { type: "hypothetical_perfect" };
+        }
+
+        return {
+          slotName: slot.slotName,
+          ingredientObject: slot.ingredientObject,
+          unitsRequired: slot.unitsRequired,
+          ownedOptions,
+          spawnOptions,
+          chosen,
+        };
+      });
+
+      // Build the SlotFill[] the math core will score against.
+      const slots: SlotFill[] = slotInfos.map((info) => {
+        if (info.chosen.type === "resource") {
+          const r = resourceById.get(info.chosen.resourceId);
+          if (r) {
+            const stats: ResourceStatsVector = {
+              CR: r.cr,
+              CD: r.cd,
+              DR: r.dr,
+              HR: r.hr,
+              FL: r.fl,
+              MA: r.ma,
+              PE: r.pe,
+              OQ: r.oq,
+              SR: r.sr,
+              UT: r.ut,
+            };
+            return { unitsRequired: info.unitsRequired, stats };
+          }
+        }
+        // Fall through to hypothetical-perfect when no choice (or stale id).
+        return hypotheticalPerfectFill(info.unitsRequired);
+      });
 
       const profile = input.skillProfile ?? DEFAULT_SKILL_PROFILE;
       const tier = (input.assemblyTier ?? 1) as AssemblyTier;
@@ -1947,6 +2091,12 @@ export function registerSimulatorHandlers(): void {
         assemblyTier: tier,
       });
 
+      const summary: "perfect" | "mixed" = slotInfos.every(
+        (s) => s.chosen.type === "hypothetical_perfect",
+      )
+        ? "perfect"
+        : "mixed";
+
       return {
         schematic: {
           id: schem.id,
@@ -1954,7 +2104,8 @@ export function registerSimulatorHandlers(): void {
           profession: professionForSkillGroup(schem.skillGroup),
           complexity: schem.complexity ?? null,
         },
-        slotConfig: "hypothetical_perfect",
+        slots: slotInfos,
+        slotConfigSummary: summary,
         assumptions: {
           skillProfile: profile,
           assemblyTier: tier,

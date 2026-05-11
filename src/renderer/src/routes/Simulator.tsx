@@ -5,15 +5,17 @@ import type {
   SchematicSummary,
   SimulatorPredictResult,
   SimulatorSkillProfile,
+  SimulatorSlotChoice,
+  SimulatorSlotInfo,
 } from "@shared/ipc-types";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
-// Phase 6 v1 — Crafting simulator.
+// Phase 6 v1.1 — Crafting simulator with per-slot resource picker.
 //
-// "Given this schematic, hypothetical perfect resources, and a skill profile,
-// what's the ceiling craftingValues map?" That's the v1 answer. Future
-// versions will swap hypothetical-perfect for actual slot choice from
-// inventory/spawns + per-row experimentation strategy + A/B comparison.
+// Pick a schematic; for each raw slot, pick a resource from your inventory or
+// current spawns (or leave on "hypothetical perfect" for ceiling reads). The
+// simulator runs the actual SwoGEmu/Core3 math on your chosen mix and shows
+// per-property-group predicted values.
 
 const ASSEMBLY_TIER_LABELS: Record<number, string> = {
   0: "Amazing Success (×1.05)",
@@ -42,6 +44,9 @@ export function Simulator(): JSX.Element {
   const [result, setResult] = useState<SimulatorPredictResult | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  // Per-slot resource choices. Keyed by schematicId|slotName so swapping
+  // schematics doesn't drag the previous schematic's picks along.
+  const [slotChoices, setSlotChoices] = useState<Record<string, SimulatorSlotChoice>>({});
 
   // Load active list (preferred scope) + a smaller "all" fallback for search.
   useEffect(() => {
@@ -53,13 +58,26 @@ export function Simulator(): JSX.Element {
     void window.api.listSchematics({ query: searchQuery || undefined }).then(setAllSchematics);
   }, [character, searchQuery, schematicId]);
 
+  // Filter slotChoices to just the keys for the active schematic.
+  const activeSlotChoices = useMemo(() => {
+    if (!schematicId) return {};
+    const out: Record<string, SimulatorSlotChoice> = {};
+    const prefix = `${schematicId}|`;
+    for (const [k, v] of Object.entries(slotChoices)) {
+      if (k.startsWith(prefix)) {
+        out[k.slice(prefix.length)] = v;
+      }
+    }
+    return out;
+  }, [slotChoices, schematicId]);
+
   const run = useCallback(async () => {
     if (!schematicId) return;
     setLoading(true);
     try {
       const res = await window.api.predictManufacture({
         schematicId,
-        slotConfig: "hypothetical_perfect",
+        slotChoices: activeSlotChoices,
         skillProfile: profile,
         assemblyTier,
       });
@@ -67,7 +85,13 @@ export function Simulator(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [schematicId, profile, assemblyTier]);
+  }, [schematicId, profile, assemblyTier, activeSlotChoices]);
+
+  function setSlotChoice(slotName: string, choice: SimulatorSlotChoice): void {
+    if (!schematicId) return;
+    const key = `${schematicId}|${slotName}`;
+    setSlotChoices((prev) => ({ ...prev, [key]: choice }));
+  }
 
   useEffect(() => {
     const t = setTimeout(() => void run(), 100);
@@ -202,6 +226,26 @@ export function Simulator(): JSX.Element {
             </p>
           </div>
 
+          {result && result.slots.length > 0 && (
+            <div className="rounded-md border border-slate-700 bg-slate-900 p-3 space-y-2">
+              <h3 className="text-xs font-medium text-slate-300 mb-1">
+                Resource slots ({result.slots.length})
+              </h3>
+              <p className="text-[11px] text-slate-500 leading-tight mb-2">
+                Pick per slot. "Perfect" assumes a 1000-stat hypothetical for
+                ceiling reads. Owned + spawning resources that fit each slot's
+                type appear in their respective groups.
+              </p>
+              {result.slots.map((slot) => (
+                <SlotPicker
+                  key={slot.slotName}
+                  slot={slot}
+                  onChange={(c) => setSlotChoice(slot.slotName, c)}
+                />
+              ))}
+            </div>
+          )}
+
           {result && (
             <div className="rounded-md border border-slate-700 bg-slate-900 p-3 text-xs text-slate-300 space-y-1">
               <h3 className="text-xs font-medium text-slate-300 mb-1">Context</h3>
@@ -216,6 +260,20 @@ export function Simulator(): JSX.Element {
               <div>
                 <span className="text-slate-500">Exp points:</span>{" "}
                 {result.assumptions.experimentationPointBudget}
+              </div>
+              <div>
+                <span className="text-slate-500">Slot fill:</span>{" "}
+                <span
+                  className={
+                    result.slotConfigSummary === "perfect"
+                      ? "text-amber-300"
+                      : "text-emerald-300"
+                  }
+                >
+                  {result.slotConfigSummary === "perfect"
+                    ? "All hypothetical perfect (ceiling)"
+                    : "Mixed real / hypothetical"}
+                </span>
               </div>
             </div>
           )}
@@ -345,4 +403,83 @@ function SkillNumber({
       />
     </label>
   );
+}
+
+const HYPOTHETICAL_VALUE = "__perfect__";
+
+function SlotPicker({
+  slot,
+  onChange,
+}: {
+  slot: SimulatorSlotInfo;
+  onChange: (choice: SimulatorSlotChoice) => void;
+}): JSX.Element {
+  const selectedValue =
+    slot.chosen.type === "resource" ? slot.chosen.resourceId : HYPOTHETICAL_VALUE;
+
+  function handleChange(v: string): void {
+    if (v === HYPOTHETICAL_VALUE) {
+      onChange({ type: "hypothetical_perfect" });
+    } else {
+      onChange({ type: "resource", resourceId: v });
+    }
+  }
+
+  const ownedCount = slot.ownedOptions.length;
+  const spawnCount = slot.spawnOptions.length;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs text-slate-200">
+          {humanSlotName(slot.slotName)}
+        </span>
+        <span
+          className="text-[10px] font-mono text-slate-500"
+          title={`Accepts ${slot.ingredientObject}. Needs ${slot.unitsRequired} units.`}
+        >
+          {slot.unitsRequired}u · {slot.ingredientObject}
+        </span>
+      </div>
+      <select
+        value={selectedValue}
+        onChange={(e) => handleChange(e.target.value)}
+        className="w-full px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-slate-100"
+      >
+        <option value={HYPOTHETICAL_VALUE}>
+          Hypothetical perfect (1000 stats)
+        </option>
+        {ownedCount > 0 && (
+          <optgroup label={`Owned (${ownedCount})`}>
+            {slot.ownedOptions.map((o) => (
+              <option key={`o-${o.resourceId}`} value={o.resourceId}>
+                {o.resourceName} {o.oq !== null ? `· OQ ${o.oq}` : ""}
+                {o.ownedUnits ? ` · ${o.ownedUnits.toLocaleString()} on hand` : ""}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {spawnCount > 0 && (
+          <optgroup label={`Currently spawning (${spawnCount})`}>
+            {slot.spawnOptions.map((o) => (
+              <option key={`s-${o.resourceId}`} value={o.resourceId}>
+                {o.resourceName} {o.oq !== null ? `· OQ ${o.oq}` : ""}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {ownedCount === 0 && spawnCount === 0 && (
+          <option disabled value="">— no matching resources known —</option>
+        )}
+      </select>
+    </div>
+  );
+}
+
+/** Human-format a slot key like "frame_assembly" → "Frame Assembly". */
+function humanSlotName(s: string): string {
+  return s
+    .split(/[_\s]+/)
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
+    .join(" ");
 }

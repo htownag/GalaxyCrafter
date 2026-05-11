@@ -270,14 +270,47 @@ export interface SimulatorSkillProfile {
   toolEffectiveness: number;
 }
 
+/** Per-slot resource choice. Slots not in `slotChoices` default to perfect. */
+export type SimulatorSlotChoice =
+  | { type: "hypothetical_perfect" }
+  | { type: "resource"; resourceId: string };
+
 export interface SimulatorPredictInput {
   schematicId: string;
-  /** v1: only "hypothetical_perfect" (every stat at 1000) is supported. Future
-   *  versions will accept per-slot resource ids from inventory / spawns. */
-  slotConfig: "hypothetical_perfect";
+  /** v1.1: per-slot choice. Slots without an entry default to hypothetical-perfect. */
+  slotChoices?: Record<string, SimulatorSlotChoice>;
   skillProfile?: SimulatorSkillProfile;
   /** Defaults to 1 (GREATSUCCESS) — the realistic competent-crafter baseline. */
   assemblyTier?: number;
+}
+
+/** A resource available to fill a given slot — owned inventory or currently spawning. */
+export interface SimulatorSlotOption {
+  resourceId: string;
+  resourceName: string;
+  /** "owned" = lives in player inventory; "spawn" = currently spawning on the latest snapshot. */
+  source: "owned" | "spawn";
+  /** Units the player has on hand (only for owned). */
+  ownedUnits?: number;
+  /** Top-line OQ stat for quick scan in the dropdown. Null if the resource type doesn't carry OQ. */
+  oq: number | null;
+  /** Type-display-name, e.g. "Iron Dolovite" — shown after the resource name in the dropdown. */
+  typeDisplayName: string;
+}
+
+export interface SimulatorSlotInfo {
+  slotName: string;
+  /** Resource family or IFF path the schematic slot accepts. */
+  ingredientObject: string;
+  unitsRequired: number;
+  /** Resources in the player's inventory that fit this slot, sorted by name. */
+  ownedOptions: SimulatorSlotOption[];
+  /** Currently-spawning resources that fit this slot, sorted by name. */
+  spawnOptions: SimulatorSlotOption[];
+  /** Whatever the prediction used for this slot. */
+  chosen:
+    | { type: "hypothetical_perfect" }
+    | { type: "resource"; resourceId: string; resourceName: string };
 }
 
 export interface SimulatorPredictedGroup {
@@ -299,7 +332,10 @@ export interface SimulatorPredictResult {
     profession: string | null;
     complexity: number | null;
   };
-  slotConfig: "hypothetical_perfect";
+  /** Per-slot fit options + the chosen resource per slot. */
+  slots: SimulatorSlotInfo[];
+  /** "perfect" iff every slot is hypothetical-perfect; "mixed" otherwise. */
+  slotConfigSummary: "perfect" | "mixed";
   assumptions: {
     skillProfile: SimulatorSkillProfile;
     assemblyTier: number;
