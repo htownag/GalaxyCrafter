@@ -16,7 +16,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../../core/verdict/compat";
 import { matchTier, rollupResourceVerdict } from "../../core/verdict/rollup";
 import { scoreGroup } from "../../core/verdict/score";
-import type { ResourceStats, ScoredMatch, StatBounds, StatWeight } from "../../core/verdict/types";
+import type { ResourceStats, ScoredMatch, StatWeight } from "../../core/verdict/types";
 import { getDb } from "../../db";
 import {
   activeSchematics,
@@ -65,37 +65,10 @@ function statsFromRow(row: typeof resources.$inferSelect): ResourceStats {
   };
 }
 
-function capsFromTypeRow(row: typeof resourceTypes.$inferSelect): StatBounds {
-  return {
-    OQ: row.capOq,
-    CR: row.capCr,
-    CD: row.capCd,
-    DR: row.capDr,
-    FL: row.capFl,
-    HR: row.capHr,
-    MA: row.capMa,
-    PE: row.capPe,
-    SR: row.capSr,
-    UT: row.capUt,
-    ER: row.capEr,
-  };
-}
-
-function floorsFromTypeRow(row: typeof resourceTypes.$inferSelect): StatBounds {
-  return {
-    OQ: row.floorOq,
-    CR: row.floorCr,
-    CD: row.floorCd,
-    DR: row.floorDr,
-    FL: row.floorFl,
-    HR: row.floorHr,
-    MA: row.floorMa,
-    PE: row.floorPe,
-    SR: row.floorSr,
-    UT: row.floorUt,
-    ER: row.floorEr,
-  };
-}
+// (caps / floors helpers removed — universal-bounds scoring doesn't need
+// per-type cap/floor inputs. The Resource Detail view still uses caps
+// from the resource_types table for stat progress bars; that's queried
+// separately in the resources:detail handler.)
 
 /**
  * Build the per-character scoring context: every active schematic, with
@@ -353,8 +326,6 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
   for (const owned of ownedResourceRows) {
     const tr = typeById.get(owned.typeId);
     if (!tr) continue; // owned resource of a type the reference data doesn't know — skip
-    const caps = capsFromTypeRow(tr);
-    const floors = floorsFromTypeRow(tr);
     const stats = statsFromRow(owned);
     for (const ctx of activeCtx) {
       const fits = ctx.rawSlots.some((s) =>
@@ -362,7 +333,7 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       );
       if (!fits) continue;
       for (const g of ctx.propertyGroups) {
-        const score = scoreGroup(stats, caps, floors, g.weights);
+        const score = scoreGroup(stats, g.weights);
         if (score === null) continue;
         const key = `${ctx.schematicId}|${g.id}`;
         const prev = ownedBestScore.get(key) ?? 0;
@@ -382,8 +353,6 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
     const tr = typeById.get(r.typeId);
     if (!tr) continue; // Resource of a type the reference data doesn't know — skip.
 
-    const caps = capsFromTypeRow(tr);
-    const floors = floorsFromTypeRow(tr);
     const stats = statsFromRow(r);
 
     const matches: ScoredMatch[] = [];
@@ -396,7 +365,7 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
 
       // For each property group on this schematic, score against the resource.
       for (const g of ctx.propertyGroups) {
-        const score = scoreGroup(stats, caps, floors, g.weights);
+        const score = scoreGroup(stats, g.weights);
         if (score === null) continue;
         const scoreOwned = ownedBestScore.get(`${ctx.schematicId}|${g.id}`) ?? 0;
         if (scoreOwned > 0) invSeededMatches++;

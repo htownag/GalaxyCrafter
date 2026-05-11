@@ -28,6 +28,9 @@ import type {
   ActiveSchematicEntry,
   Character,
   CreateCharacterInput,
+  FinderRankInput,
+  FinderResult,
+  FinderResultRow,
   InventoryEntry,
   InventoryStatus,
   InventoryUpsertInput,
@@ -46,6 +49,8 @@ import type {
 } from "../shared/ipc-types";
 import { professionForSkillGroup } from "../shared/professions";
 import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../core/verdict/compat";
+import { scoreGroup } from "../core/verdict/score";
+import type { ResourceStats, StatWeight } from "../core/verdict/types";
 import { recomputeVerdicts } from "./verdict/recompute";
 
 interface GalaxyConfig {
@@ -407,6 +412,71 @@ export function registerIpc(): void {
           .get() !== undefined
       : false;
 
+    // Resolve display names for each slot's `ingredientObject`. Raw-resource
+    // slots (type 0) reference a resource group or specific type ID; look
+    // those up in the reference data so the UI shows "Diatium Copper"
+    // instead of "copper_diatium". Component slots (type 1/3) reference an
+    // IFF path; map to the producing schematic's name when known, else
+    // humanise the IFF basename as a fallback.
+    const ingredientIds = Array.from(new Set(slotsRows.map((sl) => sl.ingredientObject)));
+    const ingredientDisplayNames = new Map<string, string>();
+    if (ingredientIds.length > 0) {
+      // Raw-resource lookups (type 0): groups first, then types as fallback.
+      const groupHits = db
+        .select()
+        .from(resourceGroups)
+        .where(inArray(resourceGroups.id, ingredientIds))
+        .all();
+      for (const g of groupHits) ingredientDisplayNames.set(g.id, g.name);
+      const remainingForType = ingredientIds.filter((i) => !ingredientDisplayNames.has(i));
+      if (remainingForType.length > 0) {
+        const typeHits = db
+          .select()
+          .from(resourceTypes)
+          .where(inArray(resourceTypes.id, remainingForType))
+          .all();
+        for (const t of typeHits) ingredientDisplayNames.set(t.id, t.name);
+      }
+      // Component lookups (type 1/3): the ingredient is an IFF path. The
+      // producing schematic's `objectPath` matches exactly; pull names.
+      const remainingForComponent = ingredientIds.filter(
+        (i) => !ingredientDisplayNames.has(i) && i.includes("/"),
+      );
+      if (remainingForComponent.length > 0) {
+        const componentHits = db
+          .select()
+          .from(schematics)
+          .where(inArray(schematics.objectPath, remainingForComponent))
+          .all();
+        for (const c of componentHits) {
+          if (c.objectPath) ingredientDisplayNames.set(c.objectPath, c.name);
+        }
+      }
+    }
+
+    function humaniseIff(path: string): string {
+      // Fallback for component IFFs not matched to a schematic. Take the
+      // basename, strip .iff, convert underscores to spaces, title-case.
+      const base = path.split("/").pop()?.replace(/\.iff$/i, "") ?? path;
+      return base
+        .split("_")
+        .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
+        .join(" ");
+    }
+
+    function resolveDisplayName(ingredientObject: string, ingredientType: number): string {
+      const hit = ingredientDisplayNames.get(ingredientObject);
+      if (hit) return hit;
+      if (ingredientType === 0) {
+        // Raw resource without a hit: leave the canonical id as-is — the
+        // renderer caption still shows it. Reference data may be older
+        // than the schematic's referenced group/type.
+        return ingredientObject;
+      }
+      // Component path with no schematic match: humanise IFF basename.
+      return humaniseIff(ingredientObject);
+    }
+
     return {
       id: s.id,
       name: s.name,
@@ -425,6 +495,7 @@ export function registerIpc(): void {
         slotName: sl.slotName,
         ingredientType: sl.ingredientType,
         ingredientObject: sl.ingredientObject,
+        ingredientDisplayName: resolveDisplayName(sl.ingredientObject, sl.ingredientType),
         unitsRequired: sl.unitsRequired,
         contribution: sl.contribution ?? 100,
       })),
@@ -990,6 +1061,284 @@ export function registerIpc(): void {
         )
         .run();
       if (result.changes > 0) recomputeForCharacter(characterId);
+    },
+  );
+
+  // === Phase 5: Resource Finder (schematic-driven reverse search) ===
+
+  ipcMain.handle(
+    "finder:rank",
+    async (_evt, input: FinderRankInput): Promise<FinderResult | null> => {
+      const db = getDb();
+      const schem = db.select().from(schematics).where(eq(schematics.id, input.schematicId)).get();
+      if (!schem) return null;
+
+      // All scoreable property groups on this schematic — ones with at least
+      // one weight row. Renderer uses this to populate the picker dropdown.
+      const groupRows = db
+        .select()
+        .from(schematicPropertyGroups)
+        .where(eq(schematicPropertyGroups.schematicId, input.schematicId))
+        .all();
+      const groupIds = groupRows.map((g) => g.id);
+      const weightRows =
+        groupIds.length > 0
+          ? db
+              .select()
+              .from(schematicPropertyWeights)
+              .where(inArray(schematicPropertyWeights.groupId, groupIds))
+              .all()
+          : [];
+      const weightsByGroup = new Map<number, StatWeight[]>();
+      for (const w of weightRows) {
+        const arr = weightsByGroup.get(w.groupId) ?? [];
+        arr.push({ stat: w.stat, weight: w.weight });
+        weightsByGroup.set(w.groupId, arr);
+      }
+
+      const availableGroups = groupRows
+        .map((g) => ({
+          id: g.id,
+          propertyName: g.propertyName,
+          expGroup: g.expGroup,
+          weights: weightsByGroup.get(g.id) ?? [],
+        }))
+        .filter((g) => g.weights.length > 0);
+
+      if (availableGroups.length === 0) {
+        // Schematic has no scoreable property groups — return the empty
+        // structure so the renderer can show "nothing to rank against."
+        return {
+          schematic: {
+            id: schem.id,
+            name: schem.name,
+            profession: professionForSkillGroup(schem.skillGroup),
+          },
+          availableGroups: [],
+          selectedGroup: { id: 0, propertyName: null, expGroup: null, weights: [] },
+          slotFilter: input.slotFilter ?? true,
+          rows: [],
+        };
+      }
+
+      // Pick the requested group, or default to the first scoreable one.
+      const selectedGroup =
+        availableGroups.find((g) => g.id === input.propertyGroupId) ?? availableGroups[0];
+
+      // Slot list — only raw-resource slots (ingredientType=0). Used both
+      // for the compat filter and to record which slots each row fits.
+      const slotRows = db
+        .select()
+        .from(schematicSlots)
+        .where(
+          and(
+            eq(schematicSlots.schematicId, input.schematicId),
+            eq(schematicSlots.ingredientType, 0),
+          ),
+        )
+        .all();
+      const slotFilter = input.slotFilter ?? true;
+
+      // Load current snapshot's resources for this schematic's galaxy. We
+      // infer galaxy from the active character; if none, return empty.
+      const activeCharId = getSetting("active.character");
+      if (!activeCharId) {
+        return {
+          schematic: {
+            id: schem.id,
+            name: schem.name,
+            profession: professionForSkillGroup(schem.skillGroup),
+          },
+          availableGroups,
+          selectedGroup,
+          slotFilter,
+          rows: [],
+        };
+      }
+      const activeChar = db
+        .select()
+        .from(characters)
+        .where(eq(characters.id, activeCharId))
+        .get();
+      if (!activeChar) {
+        return {
+          schematic: {
+            id: schem.id,
+            name: schem.name,
+            profession: professionForSkillGroup(schem.skillGroup),
+          },
+          availableGroups,
+          selectedGroup,
+          slotFilter,
+          rows: [],
+        };
+      }
+      const latest = db
+        .select()
+        .from(snapshots)
+        .where(eq(snapshots.galaxyId, activeChar.galaxyId))
+        .orderBy(desc(snapshots.fetchedAt))
+        .limit(1)
+        .get();
+      if (!latest) {
+        return {
+          schematic: {
+            id: schem.id,
+            name: schem.name,
+            profession: professionForSkillGroup(schem.skillGroup),
+          },
+          availableGroups,
+          selectedGroup,
+          slotFilter,
+          rows: [],
+        };
+      }
+
+      const obsRows = db
+        .select()
+        .from(resourceObservations)
+        .where(eq(resourceObservations.snapshotId, latest.id))
+        .all();
+      const snapshotResourceIds = obsRows.map((r) => r.resourceId);
+      if (snapshotResourceIds.length === 0) {
+        return {
+          schematic: {
+            id: schem.id,
+            name: schem.name,
+            profession: professionForSkillGroup(schem.skillGroup),
+          },
+          availableGroups,
+          selectedGroup,
+          slotFilter,
+          rows: [],
+        };
+      }
+
+      const resourceRows = db
+        .select()
+        .from(resources)
+        .where(inArray(resources.id, snapshotResourceIds))
+        .all();
+
+      // Type bounds + ancestor edges (only for types actually present).
+      const typeIds = Array.from(new Set(resourceRows.map((r) => r.typeId)));
+      const typeRowsAll = db
+        .select()
+        .from(resourceTypes)
+        .where(inArray(resourceTypes.id, typeIds))
+        .all();
+      const typeById = new Map(typeRowsAll.map((t) => [t.id, t]));
+      const tgEdges = db
+        .select()
+        .from(resourceTypeGroups)
+        .where(inArray(resourceTypeGroups.typeId, typeIds))
+        .all();
+      const typeAncestors = buildTypeAncestorMap(tgEdges);
+
+      // Inventory join — for the OWNED flag and to compute scoreOwned
+      // against this schematic+propertyGroup so the UI can show delta.
+      const inventoryRows = db
+        .select()
+        .from(inventoryEntries)
+        .where(eq(inventoryEntries.characterId, activeCharId))
+        .all();
+      const inventoryById = new Map(inventoryRows.map((i) => [i.resourceId, i]));
+
+      // Compute scoreOwned for the selected (schematic, propertyGroup) by
+      // walking owned resources through the same compat + scoring path.
+      let scoreOwned = 0;
+      if (inventoryRows.length > 0) {
+        const ownedIds = inventoryRows.map((i) => i.resourceId);
+        const ownedRows = db
+          .select()
+          .from(resources)
+          .where(inArray(resources.id, ownedIds))
+          .all();
+        for (const owned of ownedRows) {
+          const tr = typeById.get(owned.typeId);
+          if (!tr) continue;
+          const fits = slotRows.some((s) =>
+            resourceTypeFitsRawSlot(owned.typeId, s.ingredientObject, typeAncestors),
+          );
+          if (!fits) continue;
+          const stats: ResourceStats = {
+            OQ: owned.oq, CR: owned.cr, CD: owned.cd, DR: owned.dr,
+            FL: owned.fl, HR: owned.hr, MA: owned.ma, PE: owned.pe,
+            SR: owned.sr, UT: owned.ut, ER: owned.er,
+          };
+          const s = scoreGroup(stats, selectedGroup.weights);
+          if (s !== null && s > scoreOwned) scoreOwned = s;
+        }
+      }
+
+      // Planet lookup for the visible rows. We don't yet know which rows
+      // will pass the slot filter, so query upfront for the full set.
+      const planetRows = db
+        .select()
+        .from(resourcePlanets)
+        .where(inArray(resourcePlanets.resourceId, snapshotResourceIds))
+        .all();
+      const planetsById = new Map<string, string[]>();
+      for (const p of planetRows) {
+        const arr = planetsById.get(p.resourceId) ?? [];
+        arr.push(p.planet);
+        planetsById.set(p.resourceId, arr);
+      }
+
+      // Score every candidate. Optionally filter to slot-fitting only.
+      const rows: FinderResultRow[] = [];
+      for (const r of resourceRows) {
+        const tr = typeById.get(r.typeId);
+        if (!tr) continue;
+
+        const matchingSlots = slotRows
+          .filter((s) => resourceTypeFitsRawSlot(r.typeId, s.ingredientObject, typeAncestors))
+          .map((s) => s.slotName);
+        if (slotFilter && matchingSlots.length === 0) continue;
+
+        const stats: ResourceStats = {
+          OQ: r.oq, CR: r.cr, CD: r.cd, DR: r.dr,
+          FL: r.fl, HR: r.hr, MA: r.ma, PE: r.pe,
+          SR: r.sr, UT: r.ut, ER: r.er,
+        };
+        const score = scoreGroup(stats, selectedGroup.weights);
+        if (score === null) continue;
+
+        const inv = inventoryById.get(r.id);
+        const weightedStats = selectedGroup.weights.map((w) => ({
+          stat: w.stat,
+          value: stats[w.stat as keyof ResourceStats],
+        }));
+
+        rows.push({
+          resourceId: r.id,
+          resourceName: r.name,
+          typeId: r.typeId,
+          typeDisplayName: r.typeDisplayName,
+          groupId: r.groupId,
+          planets: planetsById.get(r.id) ?? [],
+          score,
+          scoreOwned,
+          weightedStats,
+          owned: !!inv,
+          ownedUnits: inv?.units ?? null,
+          fitsSlots: matchingSlots,
+        });
+      }
+
+      rows.sort((a, b) => b.score - a.score);
+
+      return {
+        schematic: {
+          id: schem.id,
+          name: schem.name,
+          profession: professionForSkillGroup(schem.skillGroup),
+        },
+        availableGroups,
+        selectedGroup,
+        slotFilter,
+        rows,
+      };
     },
   );
 }

@@ -4,6 +4,7 @@ import { createHashRouter, RouterProvider } from "react-router-dom";
 import { App } from "./App";
 import { ActiveSchematics } from "./routes/ActiveSchematics";
 import { Character } from "./routes/Character";
+import { Finder } from "./routes/Finder";
 import { Inventory } from "./routes/Inventory";
 import { ResourceDetail } from "./routes/ResourceDetail";
 import { Resources } from "./routes/Resources";
@@ -23,6 +24,8 @@ const router = createHashRouter([
       { path: "schematics/:id", element: <SchematicDetail /> },
       { path: "active", element: <ActiveSchematics /> },
       { path: "inventory", element: <Inventory /> },
+      { path: "finder", element: <Finder /> },
+      { path: "finder/:schematicId", element: <Finder /> },
       { path: "character", element: <Character /> },
     ],
   },

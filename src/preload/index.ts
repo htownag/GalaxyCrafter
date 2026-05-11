@@ -36,6 +36,9 @@ const api: IpcApi = {
   upsertInventory: (input) => ipcRenderer.invoke("inventory:upsert", input),
   removeInventory: (characterId, resourceId) =>
     ipcRenderer.invoke("inventory:remove", characterId, resourceId),
+
+  // Phase 5 — Resource Finder
+  rankResourcesForSchematic: (input) => ipcRenderer.invoke("finder:rank", input),
   onVerdictsUpdated: (listener) => {
     const wrapped = (_evt: Electron.IpcRendererEvent, payload: { characterId: string }): void =>
       listener(payload);

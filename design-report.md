@@ -224,14 +224,15 @@ The heart of the tool. Goal: every resource, every refresh, gets a single person
 
 #### 5.2.2 Per-schematic, per-property-group score
 
+> **Errata (2026-05-11):** the formula below originally referenced per-resource-type `cap` and `floor`, but the §5.2.8 worked example used universal `cap=1000 floor=0` for both stats — and the worked example reflects what the SWG experimentation engine actually computes. Universal bounds is the correct convention; per-type bounds inflates resources that peg narrow-cap types and understates resources with high absolute stats on wide-cap types. The implementation (`src/core/verdict/score.ts`) uses universal bounds; the §5.2.5 verdict rules and §5.6 Resource Finder ranking both consume this corrected score. Per-type cap/floor is still imported and surfaced on the §5.5 stat bars as "% of cap" — a legitimate but separate "is this spawn good for its type?" question.
+
 For a schematic ingredient slot that accepts this resource type, and an experimental property group with weights `{stat_i: w_i}` where `Σ w_i = 1`:
 
 ```
-pct_of_range(stat) = (resource.stat - type.floor[stat]) / (type.cap[stat] - type.floor[stat])
-score              = Σ over stats: w_i * pct_of_range(stat_i) * 100
+score = 100 * Σ over stats: w_i * (resource.stat_i / 1000)
 ```
 
-This is the standard SWG quality-percentage calculation, identical to what GH and HD use. A resource that hits the cap on every weighted stat scores 100; one at the floor scores 0.
+A resource with the universal max (1000) on every weighted stat scores 100; one at 0 scores 0. The 0-1000 range matches the universal scale that SWGEmu's experimentation formula uses for raw stat inputs.
 
 #### 5.2.3 Owned-best score
 

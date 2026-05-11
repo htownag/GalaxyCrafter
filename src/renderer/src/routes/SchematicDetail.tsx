@@ -152,6 +152,14 @@ export function SchematicDetail(): JSX.Element {
           ) : (
             <span className="text-xs text-slate-400">Create a character to enable active list.</span>
           )}
+          {detail.isActive && (
+            <Link
+              to={`/finder/${encodeURIComponent(detail.id)}`}
+              className="text-xs text-emerald-400 hover:text-emerald-300"
+            >
+              Find top-scoring spawning resources →
+            </Link>
+          )}
         </div>
       </div>
 
@@ -182,8 +190,11 @@ export function SchematicDetail(): JSX.Element {
                   <td className="px-3 py-2 text-slate-400 text-xs">
                     {INGREDIENT_TYPE_LABEL[slot.ingredientType] ?? `type ${slot.ingredientType}`}
                   </td>
-                  <td className="px-3 py-2 text-slate-300 font-mono text-xs">
-                    {slot.ingredientObject}
+                  <td className="px-3 py-2 text-xs">
+                    <span className="text-slate-200">{slot.ingredientDisplayName}</span>
+                    {slot.ingredientDisplayName !== slot.ingredientObject && (
+                      <span className="ml-2 text-slate-600 font-mono">{slot.ingredientObject}</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right text-slate-300 tabular-nums">
                     {slot.unitsRequired}

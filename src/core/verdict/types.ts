@@ -24,11 +24,10 @@ export interface StatWeight {
  */
 export type ResourceStats = Record<StatKey, number | null>;
 
-/**
- * Per-resource-type cap / floor. Missing = 0 (treated as "this type doesn't
- * roll this stat"; pct_of_range short-circuits to 0).
- */
-export type StatBounds = Record<StatKey, number>;
+// (StatBounds type removed in Phase 5 — universal-bounds scoring doesn't
+// need per-type cap/floor as scoring inputs. Resource Detail still
+// surfaces type caps for stat-bar visualisation, sourced directly from
+// resource_types rows on a per-page basis.)
 
 /**
  * Single schematic+property-group match result. `null` weights mean the

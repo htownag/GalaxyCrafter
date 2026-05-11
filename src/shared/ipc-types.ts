@@ -97,7 +97,16 @@ export interface SchematicSummary {
 export interface SchematicSlot {
   slotName: string;
   ingredientType: number; // 0=raw, 1=specific component, 3=base-class component
-  ingredientObject: string; // resource family slug OR IFF path
+  ingredientObject: string; // resource family slug OR IFF path (canonical id)
+  /**
+   * In-game UI display name for `ingredientObject`. For raw resources
+   * (type 0), this is the resource group / type display name from the
+   * reference data (e.g. `copper_diatium` → "Diatium Copper"). For
+   * component slots (type 1/3), it's the component schematic's name when
+   * the IFF resolves, or a humanised basename fallback otherwise. Falls
+   * back to `ingredientObject` itself if no lookup matches.
+   */
+  ingredientDisplayName: string;
   unitsRequired: number;
   contribution: number;
 }
@@ -175,6 +184,58 @@ export interface InventoryUpsertInput {
   units: number;
   status: InventoryStatus;
   notes?: string | null;
+}
+
+// === Phase 5: Resource Finder ===
+
+export interface FinderRankInput {
+  schematicId: string;
+  /** If omitted, the handler defaults to the first scoreable property group on the schematic. */
+  propertyGroupId?: number;
+  /** Default true. When false, score every resource regardless of slot-fit (escape hatch). */
+  slotFilter?: boolean;
+}
+
+export interface FinderPropertyGroupOption {
+  id: number;
+  propertyName: string | null;
+  expGroup: string | null;
+  weights: Array<{ stat: string; weight: number }>;
+}
+
+export interface FinderResultRow {
+  resourceId: string;
+  resourceName: string;
+  typeId: string;
+  typeDisplayName: string;
+  groupId: string;
+  planets: string[];
+  /** Score against the chosen property group. */
+  score: number;
+  /** Owned-best score across the user's inventory for this same (schematic, propertyGroup). */
+  scoreOwned: number;
+  /** Resource's stats for the property group's weighted stats — for "why this rank" reveal. */
+  weightedStats: Array<{ stat: string; value: number | null }>;
+  /** True when this resource is in the active character's inventory. */
+  owned: boolean;
+  ownedUnits: number | null;
+  /** Slots on the schematic this resource fits. Empty if slotFilter=false bypassed compat. */
+  fitsSlots: string[];
+}
+
+export interface FinderResult {
+  schematic: {
+    id: string;
+    name: string;
+    profession: string | null;
+  };
+  /** All scoreable property groups on the schematic, for the picker. */
+  availableGroups: FinderPropertyGroupOption[];
+  /** The currently-selected property group (echo of input or defaulted). */
+  selectedGroup: FinderPropertyGroupOption;
+  slotFilter: boolean;
+  /** Ranked results, highest score first. */
+  rows: FinderResultRow[];
 }
 
 // === Phase 3: verdicts ===
@@ -307,6 +368,9 @@ export interface IpcApi {
   listInventory(characterId: string): Promise<InventoryEntry[]>;
   upsertInventory(input: InventoryUpsertInput): Promise<InventoryEntry>;
   removeInventory(characterId: string, resourceId: string): Promise<void>;
+
+  // Phase 5 — Resource Finder (schematic-driven reverse search)
+  rankResourcesForSchematic(input: FinderRankInput): Promise<FinderResult | null>;
   /**
    * Subscribe to verdict recompute completion. Listener fires whenever any
    * mutation (snapshot refresh, active schematic add/remove, character
