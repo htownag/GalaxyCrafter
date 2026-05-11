@@ -7,6 +7,7 @@ const TABS = [
   { to: "/resources", label: "Resources" },
   { to: "/schematics", label: "Schematics" },
   { to: "/active", label: "Active" },
+  { to: "/inventory", label: "Crates" },
   { to: "/character", label: "Character" },
 ];
 
