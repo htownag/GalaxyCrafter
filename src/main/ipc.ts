@@ -23,6 +23,7 @@ import {
   snapshots,
   verdicts,
 } from "../db/schema";
+import { lookupResourceByName } from "../ingest/gh-lookup";
 import { runIngest } from "../ingest/pipeline";
 import type {
   ActiveSchematicEntry,
@@ -31,6 +32,8 @@ import type {
   FinderRankInput,
   FinderResult,
   FinderResultRow,
+  GhLookupInput,
+  GhLookupResponse,
   InventoryEntry,
   InventoryStatus,
   InventoryUpsertInput,
@@ -1061,6 +1064,114 @@ export function registerIpc(): void {
         )
         .run();
       if (result.changes > 0) recomputeForCharacter(characterId);
+    },
+  );
+
+  // === Phase 4E: GH single-resource lookup ===
+
+  ipcMain.handle(
+    "gh:lookupResource",
+    async (_evt, input: GhLookupInput): Promise<GhLookupResponse> => {
+      if (!input?.name || input.name.trim().length === 0) {
+        throw new Error("gh:lookupResource: name required");
+      }
+      if (!Number.isFinite(input.galaxyId)) {
+        throw new Error("gh:lookupResource: numeric galaxyId required");
+      }
+
+      const cleanName = input.name.trim();
+      const db = getDb();
+
+      // Short-circuit if we already have this resource locally — keeps GH
+      // traffic low and lets local data (with whatever we've ingested) win
+      // by default. Per advisor: local-first, GH is the fallback for
+      // unknowns. Caller can still see existing data via resources:detail.
+      const existing = db.select().from(resources).where(eq(resources.id, cleanName)).get();
+      if (existing) {
+        return {
+          found: true,
+          resource: {
+            id: existing.id,
+            name: existing.name,
+            typeId: existing.typeId,
+            typeDisplayName: existing.typeDisplayName,
+            groupId: existing.groupId,
+            enteredBy: existing.enteredBy ?? "",
+            addedDate: existing.addedDate,
+            galaxyId: existing.galaxyId,
+            stats: {
+              OQ: existing.oq, CR: existing.cr, CD: existing.cd, DR: existing.dr,
+              FL: existing.fl, HR: existing.hr, MA: existing.ma, PE: existing.pe,
+              SR: existing.sr, UT: existing.ut, ER: existing.er,
+            },
+            planets: db
+              .select()
+              .from(resourcePlanets)
+              .where(eq(resourcePlanets.resourceId, cleanName))
+              .all()
+              .map((p) => p.planet),
+          },
+          unavailableAt: null,
+          unavailableBy: null,
+          alreadyLocal: true,
+        };
+      }
+
+      // Hit GH. Network failures bubble up to the renderer for display.
+      console.log(`[gh] looking up "${cleanName}" on galaxy ${input.galaxyId}`);
+      const result = await lookupResourceByName(cleanName, input.galaxyId);
+      if (!result.found || !result.resource) {
+        console.log(`[gh] "${cleanName}" not found on GH`);
+        return {
+          found: false,
+          resource: null,
+          unavailableAt: null,
+          unavailableBy: null,
+          alreadyLocal: false,
+        };
+      }
+
+      // Persist to local `resources` table. No `resource_observations` row
+      // — it's not in our snapshot. The lifetime-union row exists so the
+      // inventory entry can FK-reference it. firstSeenAt/lastSeenAt fall
+      // back to addedDate from GH (when GH first saw the spawn) since we
+      // don't have local snapshot context for this fetched resource.
+      const r = result.resource;
+      const seenTs = r.addedDate || Date.now();
+      db.transaction((tx) => {
+        tx.insert(resources)
+          .values({
+            id: r.id,
+            name: r.name,
+            typeId: r.typeId,
+            typeDisplayName: r.typeDisplayName,
+            groupId: r.groupId,
+            enteredBy: r.enteredBy || null,
+            addedDate: r.addedDate,
+            galaxyId: r.galaxyId,
+            oq: r.stats.OQ, cr: r.stats.CR, cd: r.stats.CD, dr: r.stats.DR,
+            fl: r.stats.FL, hr: r.stats.HR, ma: r.stats.MA, pe: r.stats.PE,
+            sr: r.stats.SR, ut: r.stats.UT, er: r.stats.ER,
+            firstSeenAt: seenTs,
+            lastSeenAt: seenTs,
+          })
+          .run();
+        for (const planet of r.planets) {
+          tx.insert(resourcePlanets).values({ resourceId: r.id, planet }).run();
+        }
+      });
+
+      console.log(
+        `[gh] persisted "${cleanName}" (${r.typeDisplayName})${result.unavailableAt !== null ? ` — DESPAWNED on ${new Date(result.unavailableAt).toISOString()}` : ""}`,
+      );
+
+      return {
+        found: true,
+        resource: r,
+        unavailableAt: result.unavailableAt,
+        unavailableBy: result.unavailableBy,
+        alreadyLocal: false,
+      };
     },
   );
 

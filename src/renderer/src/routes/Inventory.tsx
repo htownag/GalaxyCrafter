@@ -33,21 +33,26 @@ function relativeAge(ts: number): string {
 // optional notes and Add.
 function AddResourcePanel({
   characterId,
+  galaxyId,
   snapshotResources,
   onAdded,
   existingIds,
 }: {
   characterId: string;
+  galaxyId: number;
   snapshotResources: Resource[];
   onAdded: () => void;
   existingIds: Set<string>;
 }): JSX.Element {
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Resource | null>(null);
+  const [pickedIsDespawned, setPickedIsDespawned] = useState(false);
   const [units, setUnits] = useState("");
   const [status, setStatus] = useState<InventoryStatus>("live");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ghLooking, setGhLooking] = useState(false);
+  const [ghMessage, setGhMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Filter snapshot by query. Type 2+ chars to populate; cap at 12 results
@@ -64,13 +69,53 @@ function AddResourcePanel({
       .slice(0, 12);
   }, [query, snapshotResources]);
 
+  // GH fallback: when local snapshot has no matches AND the user typed
+  // what looks like a complete name (≥4 chars), offer to hit GH's
+  // getResourceByName.py for an exact-name lookup. The endpoint covers
+  // despawned/historical resources too — the use case is existing crafters
+  // adding pre-existing inventory or a vendor-bought server-best.
+  const canFallbackToGh = query.trim().length >= 4 && matches.length === 0;
+
+  async function lookupOnGh(): Promise<void> {
+    const cleanName = query.trim();
+    if (cleanName.length === 0) return;
+    setGhLooking(true);
+    setGhMessage(null);
+    setError(null);
+    try {
+      const result = await window.api.lookupGhResource({ name: cleanName, galaxyId });
+      if (!result.found || !result.resource) {
+        setGhMessage(`"${cleanName}" not found on GalaxyHarvester either.`);
+        return;
+      }
+      setPicked(result.resource);
+      setPickedIsDespawned(result.unavailableAt !== null);
+      // Default status: despawned if GH marks the spawn unavailable; live
+      // otherwise. The user can still override before clicking Add.
+      setStatus(result.unavailableAt !== null ? "despawned" : "live");
+      setQuery("");
+      const tag = result.alreadyLocal
+        ? "already in local DB"
+        : result.unavailableAt !== null
+          ? `despawned ${new Date(result.unavailableAt).toLocaleDateString()}`
+          : "currently spawning";
+      setGhMessage(`Loaded from GH (${tag}).`);
+    } catch (e) {
+      setError(`GH lookup failed: ${String(e)}`);
+    } finally {
+      setGhLooking(false);
+    }
+  }
+
   function reset(): void {
     setQuery("");
     setPicked(null);
+    setPickedIsDespawned(false);
     setUnits("");
     setStatus("live");
     setNotes("");
     setError(null);
+    setGhMessage(null);
   }
 
   async function submit(): Promise<void> {
@@ -115,9 +160,17 @@ function AddResourcePanel({
               {picked.planets.length > 0 ? picked.planets.join(", ") : "no planets in snapshot"}
             </div>
           </div>
+          {pickedIsDespawned && (
+            <span className="text-[10px] px-2 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300 mr-2">
+              despawned on GH
+            </span>
+          )}
           <button
             type="button"
-            onClick={() => setPicked(null)}
+            onClick={() => {
+              setPicked(null);
+              setPickedIsDespawned(false);
+            }}
             className="text-xs text-slate-400 hover:text-slate-200"
           >
             change
@@ -167,12 +220,36 @@ function AddResourcePanel({
             </div>
           )}
           {query.trim().length >= 2 && matches.length === 0 && (
-            <div className="absolute z-10 left-0 right-0 mt-1 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-500">
-              No matches in current snapshot. (The resource may have despawned — record it as
-              `despawned` once we add free-form entry. For now, only currently-spawning resources can
-              be added.)
+            <div className="absolute z-10 left-0 right-0 mt-1 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs">
+              <div className="text-slate-500">
+                No matches in current snapshot.
+                {query.trim().length < 4 && " Type a few more characters."}
+              </div>
+              {canFallbackToGh && (
+                <button
+                  type="button"
+                  onClick={lookupOnGh}
+                  disabled={ghLooking}
+                  className="mt-2 px-3 py-1.5 rounded-md bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-cyan-50 text-xs font-medium"
+                >
+                  {ghLooking ? "Looking up…" : `Search GH for "${query.trim()}"`}
+                </button>
+              )}
+              {canFallbackToGh && (
+                <div className="text-[10px] text-slate-600 mt-1">
+                  Pulls full record from galaxyharvester.net — works for despawned resources too.
+                </div>
+              )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* GH lookup status / outcome banner — surfaces "Loaded from GH" or
+          "Not found on GH" outside the dropdown so it persists after a pick. */}
+      {ghMessage && (
+        <div className="mb-3 text-xs text-cyan-300/80">
+          {ghMessage}
         </div>
       )}
 
@@ -453,6 +530,7 @@ export function Inventory(): JSX.Element {
 
       <AddResourcePanel
         characterId={character.id}
+        galaxyId={character.galaxyId}
         snapshotResources={snapshotResources}
         onAdded={load}
         existingIds={existingIds}

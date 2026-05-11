@@ -192,6 +192,24 @@ export interface InventoryUpsertInput {
   notes?: string | null;
 }
 
+// === Phase 4E: GH single-resource lookup ===
+
+export interface GhLookupInput {
+  name: string;
+  galaxyId: number;
+}
+
+export interface GhLookupResponse {
+  found: boolean;
+  /** Populated when found=true. Already persisted to local `resources` table. */
+  resource: Resource | null;
+  /** When set, the resource was unavailable (despawned) on GH as of this ms timestamp. */
+  unavailableAt: number | null;
+  unavailableBy: string | null;
+  /** True when GH found it but we already had the same id locally (no write performed). */
+  alreadyLocal: boolean;
+}
+
 // === Phase 5: Resource Finder ===
 
 export interface FinderRankInput {
@@ -377,6 +395,9 @@ export interface IpcApi {
 
   // Phase 5 — Resource Finder (schematic-driven reverse search)
   rankResourcesForSchematic(input: FinderRankInput): Promise<FinderResult | null>;
+
+  // Phase 4E — GH single-resource lookup
+  lookupGhResource(input: GhLookupInput): Promise<GhLookupResponse>;
   /**
    * Subscribe to verdict recompute completion. Listener fires whenever any
    * mutation (snapshot refresh, active schematic add/remove, character
