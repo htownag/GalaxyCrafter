@@ -3,6 +3,14 @@
 **Status:** research / planning. Drafted 2026-05-11 from a direct read of Core3's `MMOCoreORB/src/server/zone/managers/crafting/` and `MMOCoreORB/src/server/zone/objects/player/sessions/crafting/`. The simulator (Phase 6) must match these formulas; this doc is the canonical reference the implementation cites.
 
 > **Source-citation convention.** `Core3:<path>:<line>` refers to `~/workspace/Core3/MMOCoreORB/src/server/zone/...`. All formulas below are pulled verbatim or paraphrased from Core3's master branch as of read-date 2026-05-11; verify any literal constants against the linked file before locking unit tests on them.
+>
+> **Verified-against-source constants (2026-05-11):**
+> - Assembly tier enum (§2): `AMAZINGSUCCESS=0 … CRITICALFAILURE=8`, all 9 values — confirmed against `CraftingManager.idl:37-45`.
+> - `assemblyPoints × 5` (§2) — confirmed against `SharedLabratory.cpp:187`.
+> - `experimentingPoints × 4` (§5b) — confirmed against `CraftingManagerImplementation.cpp:111`.
+> - Stat index → attribute mapping (§3) — confirmed against `ResourceSpawnImplementation.cpp:43` + `CraftingManager.idl:26-35`.
+> - `calculateAssemblyValueModifier` table (§4) — confirmed against `SharedLabratory.cpp:59`.
+> - `calculateExperimentationValueModifier` table (§5c) — confirmed against `SharedLabratory.cpp:21`.
 
 ---
 
@@ -82,7 +90,7 @@ local:
 
 **Source:** `Core3:.../SharedLabratory.cpp:73` (`getWeightedValue`).
 
-For a given stat index (0=CR, 1=CD, ..., 10=ER), iterate every slot on the manufacture schematic:
+For a given stat index (`CraftingManager` constants: **`CR=1, CD=2, DR=3, HR=4, FL=5, MA=6, PE=7, OQ=8, SR=9, UT=10`** — index 0 is unused; see ER callout below), iterate every slot on the manufacture schematic:
 
 ```
 nsum = 0; weightedAverage = 0
@@ -99,7 +107,26 @@ weightedAverage /= nsum
 
 So `getWeightedValue(MA)` is the **units-weighted mean of MA across all filled slots**. Same shape for any stat. Slots with no value for that stat (or a non-custom component) skip the sum.
 
+**ER (Entanglement Resistance) is not in Core3's crafting stat enum.** Resource spawns track ER and our `resources` table stores it, but no `CraftingManager` constant exists for it and no draft schematic's `resourceWeight` decodes to it. Origin: ER is a pre-CU resource attribute carried forward in GalaxyHarvester / SWGAide / our ingest pipeline for completeness, but Core3 (and therefore SR2) silently never weights it. **Simulator implication:** the property-group weights table (`schematic_property_weights`) will never contain an ER row; ignore ER when ranking resources for a slot. Resource Finder + Verdict Engine already respect this — they sum weights only for stats with `weight > 0`, and ER never appears.
+
 **Sub-component nuance:** only *custom ingredients* (looted exotics, Bio-Engineer components, etc.) contribute their stat values. Vanilla crafted sub-components produce a finished item whose stats roll up through this same path — i.e. the parent schematic sees the sub-component as having effective stats determined by its own crafted values. This matters for the simulator: when modelling parent-with-sub-components, the sub-component's already-baked properties feed into the parent's `getWeightedValue`.
+
+**Stat-index → attribute mapping** (from `Core3:ResourceSpawnImplementation.cpp:43`, the C++ side of `spawn->getValueOf(idx)`):
+
+| Index | Constant | Resource attribute key |
+|------:|----------|------------------------|
+| 1     | `CR`     | `res_cold_resist`      |
+| 2     | `CD`     | `res_conductivity`     |
+| 3     | `DR`     | `res_decay_resist`     |
+| 4     | `HR`     | `res_heat_resist`      |
+| 5     | `FL`     | `res_flavor`           |
+| 6     | `MA`     | `res_malleability`     |
+| 7     | `PE`     | `res_potential_energy` |
+| 8     | `OQ`     | `res_quality`          |
+| 9     | `SR`     | `res_shock_resistance` |
+| 10    | `UT`     | `res_toughness`        |
+
+Unit-test fixture target: when the simulator decodes `typeAndWeight >> 4`, the resulting integer must map to one of these 10 constants. Any other value is a malformed draft schematic and should fail loudly in dev / log-warn in prod.
 
 ---
 
@@ -112,7 +139,7 @@ For each `resourceWeight` row on the draft schematic (a property group like `min
 ```
 weightedSum = 0
 for each weight-entry in resourceWeight:
-  statIdx     = (typeAndWeight >> 4)         // which stat (0..10)
+  statIdx     = (typeAndWeight >> 4)         // which stat (1..10 per §3)
   percentage  = propertyPercentage           // 0..1, how much this stat contributes
   weightedSum += getWeightedValue(statIdx) × percentage
 
