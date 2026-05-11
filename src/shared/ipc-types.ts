@@ -192,6 +192,12 @@ export interface VerdictEntry {
 /**
  * Single (schematic, property-group) match for a resource. Matches the
  * shape persisted in `verdicts.breakdown_json`.
+ *
+ * Phase 4 fields: `scoreOwned` is the character's best-owned score on the
+ * same (schematic, propertyGroup); `tier` is the per-match verdict from
+ * the §5.2.5 dichotomy. Pre-Phase-4 persisted rows lack these fields —
+ * renderers should treat them as `scoreOwned: 0`, `tier: 'SKIP'` when
+ * undefined (data migrates lazily on next recompute).
  */
 export interface ScoredMatchView {
   schematicId: string;
@@ -200,6 +206,8 @@ export interface ScoredMatchView {
   propertyName: string | null;
   expGroup: string | null;
   score: number;
+  scoreOwned?: number;
+  tier?: VerdictTier;
   inheritedFromParent: boolean;
 }
 

@@ -14,13 +14,14 @@
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../../core/verdict/compat";
-import { rollupResourceVerdict } from "../../core/verdict/rollup";
+import { matchTier, rollupResourceVerdict } from "../../core/verdict/rollup";
 import { scoreGroup } from "../../core/verdict/score";
 import type { ResourceStats, ScoredMatch, StatBounds, StatWeight } from "../../core/verdict/types";
 import { getDb } from "../../db";
 import {
   activeSchematics,
   characters,
+  inventoryEntries,
   resourceObservations,
   resourceTypeGroups,
   resourceTypes,
@@ -191,6 +192,10 @@ export interface RecomputeResult {
   verdictsWritten: number;
   chase: number;
   maybe: number;
+  /** Inventory rows that contributed to ownedBestScore. */
+  inventoryEntries: number;
+  /** Number of (resource × schematic × property-group) matches where scoreOwned > 0. */
+  inventorySeededMatches: number;
   durationMs: number;
 }
 
@@ -225,6 +230,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       verdictsWritten: 0,
       chase: 0,
       maybe: 0,
+      inventoryEntries: 0,
+      inventorySeededMatches: 0,
       durationMs: Date.now() - start,
     };
   }
@@ -255,6 +262,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       verdictsWritten: 0,
       chase: 0,
       maybe: 0,
+      inventoryEntries: 0,
+      inventorySeededMatches: 0,
       durationMs: Date.now() - start,
     };
   }
@@ -275,6 +284,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       verdictsWritten: 0,
       chase: 0,
       maybe: 0,
+      inventoryEntries: 0,
+      inventorySeededMatches: 0,
       durationMs: Date.now() - start,
     };
   }
@@ -290,19 +301,81 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
   const typeRows = db.select().from(resourceTypes).where(inArray(resourceTypes.id, typeIds)).all();
   const typeById = new Map(typeRows.map((t) => [t.id, t]));
 
-  // Type→ancestor edges. We only need edges for the types present in the
-  // snapshot; this trims the working set considerably.
+  // Build ownedBestScore: for each (schematic, propertyGroup) pair on the
+  // active list, the highest score among the character's currently-owned
+  // resources of compatible type. Empty map (or 0 lookups) = empty-
+  // inventory path in matchTier, which preserves Phase 3 behaviour.
+  //
+  // Owned resources may not be in the current snapshot (e.g. banked); load
+  // them by ID separately. Union those typeIds with the snapshot typeIds
+  // when fetching the type-ancestor edge subset below.
+  const inventoryRows = db
+    .select()
+    .from(inventoryEntries)
+    .where(eq(inventoryEntries.characterId, characterId))
+    .all();
+  const ownedResourceIds = inventoryRows.map((i) => i.resourceId);
+  const ownedResourceRows =
+    ownedResourceIds.length > 0
+      ? db.select().from(resources).where(inArray(resources.id, ownedResourceIds)).all()
+      : [];
+  const ownedTypeIds = ownedResourceRows.map((r) => r.typeId);
+  const allTypeIds = Array.from(new Set([...typeIds, ...ownedTypeIds]));
+
+  // Type-row lookup: extend with any owned types not already in typeById
+  // (owned-but-not-spawning resources may reference types absent from the
+  // snapshot's type set).
+  const missingOwnedTypeIds = ownedTypeIds.filter((id) => !typeById.has(id));
+  if (missingOwnedTypeIds.length > 0) {
+    const extraTypeRows = db
+      .select()
+      .from(resourceTypes)
+      .where(inArray(resourceTypes.id, missingOwnedTypeIds))
+      .all();
+    for (const t of extraTypeRows) typeById.set(t.id, t);
+  }
+
+  // Type→ancestor edges. Pull the union — covers both candidate resources
+  // (current snapshot) and owned resources (may be banked / not spawning).
   const tgEdges = db
     .select()
     .from(resourceTypeGroups)
-    .where(inArray(resourceTypeGroups.typeId, typeIds))
+    .where(inArray(resourceTypeGroups.typeId, allTypeIds))
     .all();
   const typeAncestors = buildTypeAncestorMap(tgEdges);
+
+  // Compute ownedBest by walking each owned resource against the active
+  // context. Same compat + scoring path as the candidate loop below; this
+  // is the only place inventory enters the formula. Reserved-status entries
+  // are included — they're still owned, just earmarked elsewhere; their
+  // existence still raises the bar for "is a new spawn worth pursuing."
+  const ownedBestScore = new Map<string, number>();
+  for (const owned of ownedResourceRows) {
+    const tr = typeById.get(owned.typeId);
+    if (!tr) continue; // owned resource of a type the reference data doesn't know — skip
+    const caps = capsFromTypeRow(tr);
+    const floors = floorsFromTypeRow(tr);
+    const stats = statsFromRow(owned);
+    for (const ctx of activeCtx) {
+      const fits = ctx.rawSlots.some((s) =>
+        resourceTypeFitsRawSlot(owned.typeId, s.ingredientObject, typeAncestors),
+      );
+      if (!fits) continue;
+      for (const g of ctx.propertyGroups) {
+        const score = scoreGroup(stats, caps, floors, g.weights);
+        if (score === null) continue;
+        const key = `${ctx.schematicId}|${g.id}`;
+        const prev = ownedBestScore.get(key) ?? 0;
+        if (score > prev) ownedBestScore.set(key, score);
+      }
+    }
+  }
 
   // Score every resource against every active-schematic scoring context.
   const verdictRows: Array<typeof verdicts.$inferInsert> = [];
   let chaseCount = 0;
   let maybeCount = 0;
+  let invSeededMatches = 0; // count of matches where scoreOwned > 0 (diagnostic)
   const now = Date.now();
 
   for (const r of resourceRows) {
@@ -325,6 +398,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       for (const g of ctx.propertyGroups) {
         const score = scoreGroup(stats, caps, floors, g.weights);
         if (score === null) continue;
+        const scoreOwned = ownedBestScore.get(`${ctx.schematicId}|${g.id}`) ?? 0;
+        if (scoreOwned > 0) invSeededMatches++;
         matches.push({
           schematicId: ctx.schematicId,
           schematicName: ctx.schematicName,
@@ -332,6 +407,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
           propertyName: g.propertyName,
           expGroup: g.expGroup,
           score,
+          scoreOwned,
+          tier: matchTier(score, scoreOwned),
           inheritedFromParent: ctx.inheritedFromParent,
         });
       }
@@ -373,6 +450,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
     verdictsWritten: verdictRows.length,
     chase: chaseCount,
     maybe: maybeCount,
+    inventoryEntries: inventoryRows.length,
+    inventorySeededMatches: invSeededMatches,
     durationMs: Date.now() - start,
   };
 }

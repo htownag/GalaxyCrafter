@@ -92,6 +92,12 @@ function emitVerdictsUpdated(characterId: string): void {
  * refresh. For Phase 3 with one character, this is one call; the loop is
  * a Phase 9 (multi-character) carry-forward.
  */
+function formatInvSuffix(inventoryEntries: number, inventorySeededMatches: number): string {
+  return inventoryEntries > 0
+    ? ` · inventory ${inventoryEntries} entr${inventoryEntries === 1 ? "y" : "ies"}, ${inventorySeededMatches} owned-seeded matches`
+    : " · empty inventory (Phase 3 thresholds)";
+}
+
 function recomputeForGalaxy(galaxyId: number): void {
   const db = getDb();
   const chars = db.select().from(characters).where(eq(characters.galaxyId, galaxyId)).all();
@@ -99,7 +105,7 @@ function recomputeForGalaxy(galaxyId: number): void {
     try {
       const result = recomputeVerdicts(c.id);
       console.log(
-        `[verdict] ${c.name} (galaxy ${galaxyId}): ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored in ${result.durationMs}ms`,
+        `[verdict] ${c.name} (galaxy ${galaxyId}): ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored${formatInvSuffix(result.inventoryEntries, result.inventorySeededMatches)} in ${result.durationMs}ms`,
       );
       emitVerdictsUpdated(c.id);
     } catch (e) {
@@ -116,7 +122,7 @@ function recomputeForCharacter(characterId: string): void {
   try {
     const result = recomputeVerdicts(characterId);
     console.log(
-      `[verdict] character ${characterId}: ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored in ${result.durationMs}ms`,
+      `[verdict] character ${characterId}: ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored${formatInvSuffix(result.inventoryEntries, result.inventorySeededMatches)} in ${result.durationMs}ms`,
     );
     emitVerdictsUpdated(characterId);
   } catch (e) {
@@ -918,9 +924,10 @@ export function registerIpc(): void {
           })
           .run();
       }
-      // Stage A: no implicit recompute yet — verdicts still use absolute
-      // thresholds. Stage C will introduce score_owned into the pipeline
-      // and recomputeForCharacter() will be wired here.
+      // Phase 4 Stage C: inventory mutations move the verdict math.
+      // Recompute fires after the row is committed so the new
+      // ownedBestScore lookup sees the latest state.
+      recomputeForCharacter(input.characterId);
       const hydrated = hydrateInventoryRows(
         db
           .select()
@@ -944,7 +951,8 @@ export function registerIpc(): void {
     "inventory:remove",
     async (_evt, characterId: string, resourceId: string): Promise<void> => {
       const db = getDb();
-      db.delete(inventoryEntries)
+      const result = db
+        .delete(inventoryEntries)
         .where(
           and(
             eq(inventoryEntries.characterId, characterId),
@@ -952,7 +960,7 @@ export function registerIpc(): void {
           ),
         )
         .run();
-      // Stage C will trigger recomputeForCharacter() here.
+      if (result.changes > 0) recomputeForCharacter(characterId);
     },
   );
 }

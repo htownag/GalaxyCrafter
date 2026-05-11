@@ -33,6 +33,11 @@ export type StatBounds = Record<StatKey, number>;
 /**
  * Single schematic+property-group match result. `null` weights mean the
  * group was unscoreable (resource is missing one of the weighted stats).
+ *
+ * Phase 4 added `scoreOwned` (the character's best-owned score for the
+ * same (schematic, propertyGroup) tuple — 0 when the user owns nothing
+ * of compatible type) and the per-match `tier` derived from the §5.2.5
+ * dichotomy. The roll-up then takes the max tier across matches.
  */
 export interface ScoredMatch {
   schematicId: string;
@@ -41,6 +46,8 @@ export interface ScoredMatch {
   propertyName: string | null;
   expGroup: string | null;
   score: number; // 0..100
+  scoreOwned: number; // 0..100; 0 = own nothing compatible
+  tier: "CHASE" | "MAYBE" | "SKIP";
   inheritedFromParent: boolean;
 }
 
