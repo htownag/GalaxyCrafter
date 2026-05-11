@@ -1745,11 +1745,29 @@ export function registerIpc(): void {
           if (!isPowerResource(ancestors)) continue;
           const pe = r.pe ?? 0;
           if (pe <= 0) continue;
-          score = pe; // raw PE 0..1000 displayed; multiplier baked into yield
+          score = pe; // raw PE 0..1000 displayed; multiplier baked into yield + sort.
+
+          // Specific-harvester resolution. The catalog has multiple entries
+          // per bucket in power mode — generic `harvesterFor("heavy", bucket)`
+          // returns the FIRST match and would conflate solar/wind. Pick the
+          // exact one by walking the resource's type ancestry.
           if (ancestors.has("radioactive")) {
             harvester = HARVESTERS.find((h) => h.id === "fusion_radioactive") ?? harvester;
+          } else if (bucket === "energy") {
+            // Energy resource ids look like
+            //   energy_renewable_unlimited_wind_naboo
+            //   energy_renewable_unlimited_solar_tatooine
+            // Detect via substring on the ancestor set.
+            const wantsWind = Array.from(ancestors).some((a) => a.includes("wind"));
+            const wantsSolar = Array.from(ancestors).some((a) => a.includes("solar"));
+            if (wantsWind) {
+              harvester = HARVESTERS.find((h) => h.id === "energy_wind") ?? harvester;
+            } else if (wantsSolar) {
+              harvester = HARVESTERS.find((h) => h.id === "energy_solar") ?? harvester;
+            }
           }
           if (!harvester) continue;
+
           // Daily yield in power units = max(1, PE/500) × extracted units/day.
           const mult = powerMultiplier(pe);
           estDailyYield = mult * (p.concentration / 100) * harvester.ber * 24;
@@ -1760,11 +1778,18 @@ export function registerIpc(): void {
           estDailyYield = (p.concentration / 100) * harvester.ber * 24;
         }
 
-        const dv = deploymentValue({
-          resourceScore: powerMode ? score / 10 : score, // normalize PE to 0..100 scale for sort
-          concentrationPct: p.concentration,
-          ber: harvester.ber,
-        });
+        // Sort key. Normal mode: deploymentValue (score × conc × BER × 24).
+        // Power mode: estDailyYield directly — i.e. actual power units per
+        // day per lot. Uses the SAME max(1, PE/500) multiplier as the game,
+        // so PE > 500 is non-linearly favoured (PE 1000 = 2× PE 500's yield
+        // at equivalent conc + BER), and PE ≤ 500 floors at 1×.
+        const dv = powerMode
+          ? estDailyYield
+          : deploymentValue({
+              resourceScore: score,
+              concentrationPct: p.concentration,
+              ber: harvester.ber,
+            });
 
         candidates.push({
           resourceId: r.id,
