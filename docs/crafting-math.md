@@ -316,6 +316,14 @@ So a player with 110 exp skill has 11 points. The player chooses how to distribu
 
 ## 9. Simulator implementation outline (Phase 6)
 
+### 9.0 Scope pin (Phase 6 v1)
+
+**In scope (v1):** Weaponsmith, Armorsmith, Architect, Tailor, Chef, Artisan, Munitions Trader (Smuggler-adjacent munitions schematics). These professions all use `ResourceLabratory` and produce items whose value to the player is fully captured by the standard `craftingValues` map (per-attribute current% + max%). The simulator's predicted output IS the meaningful answer.
+
+**Out of v1 scope, deferred to v1.1:**
+- **Droid Engineer** — generic crafting math works (DroidLabratory inherits ResourceLabratory) but a droid-engineer player needs the **derived stats rollup** (HP, speed, hit, damage, skill bonus per chassis type via `DroidMechanics.h`), not raw `craftingValues`. Shipping v1 without this gives droid engineers a screen that doesn't answer their question. v1.1 adds a `derivedStats: { chassisType, ham, speed, hit, minDmg, maxDmg, skillBonus }` field to the simulator output when `prototype.gameObjectType === DROID_COMPONENT`, populated via the `DroidMechanics` statics.
+- **Bio Engineer** — genuine math fork (`GeneticLabratory`, see §10). Needs parallel `simulateBio` IPC channel with separate input schema (DnaComponent slots), output schema (creature-stat fields), and value-range scaling. Schedule as Phase 6.5 or v1.2.
+
 ### 9.1 Pure-math core (`src/core/simulator/`)
 
 Self-contained, unit-testable, no Drizzle/IPC. Mirrors `src/core/verdict/` boundary.
