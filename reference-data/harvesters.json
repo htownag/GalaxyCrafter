@@ -1,0 +1,129 @@
+{
+  "provenance": {
+    "source": "swgemu-community-baseline",
+    "note": "Base Extraction Rate (BER) and hopper-size values are community-stable across SWGEmu Core3 forks. SR2's harvester Lua scripts (~/workspace/srswgemu2/MMOCoreORB/bin/scripts/object/installation/mining_ore/, mining_organic/, generators/) match vanilla on lotSize/baseMaintenanceRate/basePowerRate; BER and hopperSize live on the shared template IFF (binary) and were not overridden. If SR2 customises these via TRE later, update this file.",
+    "lastVerified": "2026-05-11"
+  },
+  "harvesters": [
+    {
+      "id": "personal_mineral",
+      "label": "Personal Mineral Extractor",
+      "size": "personal",
+      "bucket": "mineral",
+      "ber": 8,
+      "hopper": 30000,
+      "lots": 1,
+      "installationType": 6
+    },
+    {
+      "id": "personal_chemical",
+      "label": "Personal Chemical Extractor",
+      "size": "personal",
+      "bucket": "chemical",
+      "ber": 8,
+      "hopper": 30000,
+      "lots": 1,
+      "installationType": 2
+    },
+    {
+      "id": "personal_energy_wind",
+      "label": "Personal Wind Power Generator",
+      "size": "personal",
+      "bucket": "energy",
+      "ber": 6,
+      "hopper": 30000,
+      "lots": 1,
+      "installationType": 8
+    },
+    {
+      "id": "personal_energy_solar",
+      "label": "Personal Solar Power Generator",
+      "size": "personal",
+      "bucket": "energy",
+      "ber": 6,
+      "hopper": 30000,
+      "lots": 1,
+      "installationType": 1
+    },
+    {
+      "id": "medium_mineral",
+      "label": "Mineral Mining Installation",
+      "size": "medium",
+      "bucket": "mineral",
+      "ber": 12,
+      "hopper": 45000,
+      "lots": 1,
+      "installationType": 6
+    },
+    {
+      "id": "medium_chemical",
+      "label": "Chemical Extractor",
+      "size": "medium",
+      "bucket": "chemical",
+      "ber": 12,
+      "hopper": 45000,
+      "lots": 1,
+      "installationType": 2
+    },
+    {
+      "id": "medium_energy_wind",
+      "label": "Wind Power Generator",
+      "size": "medium",
+      "bucket": "energy",
+      "ber": 8,
+      "hopper": 45000,
+      "lots": 1,
+      "installationType": 8
+    },
+    {
+      "id": "medium_energy_solar",
+      "label": "Solar Power Generator",
+      "size": "medium",
+      "bucket": "energy",
+      "ber": 8,
+      "hopper": 45000,
+      "lots": 1,
+      "installationType": 1
+    },
+    {
+      "id": "heavy_mineral",
+      "label": "Heavy Mineral Mining Installation",
+      "size": "heavy",
+      "bucket": "mineral",
+      "ber": 16,
+      "hopper": 60000,
+      "lots": 1,
+      "installationType": 6
+    },
+    {
+      "id": "heavy_chemical",
+      "label": "Heavy Chemical Extractor",
+      "size": "heavy",
+      "bucket": "chemical",
+      "ber": 16,
+      "hopper": 60000,
+      "lots": 1,
+      "installationType": 2
+    },
+    {
+      "id": "heavy_energy_wind",
+      "label": "Heavy Wind Power Generator",
+      "size": "heavy",
+      "bucket": "energy",
+      "ber": 11,
+      "hopper": 60000,
+      "lots": 1,
+      "installationType": 8
+    },
+    {
+      "id": "heavy_energy_solar",
+      "label": "Heavy Solar Power Generator",
+      "size": "heavy",
+      "bucket": "energy",
+      "ber": 11,
+      "hopper": 60000,
+      "lots": 1,
+      "installationType": 1
+    }
+  ]
+}

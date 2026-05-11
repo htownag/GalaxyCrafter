@@ -262,6 +262,53 @@ export interface FinderResult {
   rows: FinderResultRow[];
 }
 
+// === Phase 7: New-player harvester planner ===
+
+export type HarvesterSize = "personal" | "medium" | "heavy";
+export type HarvesterBucket = "mineral" | "chemical" | "energy";
+
+export interface PlannerInput {
+  characterId: string;
+  /** 0..10, default 10. Hard cap is 10 (SWG lot rule). */
+  lotsAvailable: number;
+  /** Planet name (e.g. "tatooine") or omitted for "any planet". */
+  planetBias?: string;
+  /** Apply bucket-diversity cap (max 60% per bucket). Default on. */
+  diversity: boolean;
+  /** Mix SB-flag scores into personal verdicts. Forced on when active list is empty. */
+  includeSbLane: boolean;
+}
+
+export interface PlannerRecommendation {
+  rank: number;
+  resourceId: string;
+  resourceName: string;
+  bucket: HarvesterBucket;
+  size: HarvesterSize;
+  harvesterLabel: string;
+  planet: string;
+  concentrationPct: number;
+  resourceScore: number;
+  deploymentValue: number;
+  estDailyYield: number;
+}
+
+export interface PlannerResult {
+  recommendations: PlannerRecommendation[];
+  summary: {
+    lotsUsed: number;
+    totalDeploymentValue: number;
+    bucketBreakdown: Record<HarvesterBucket, number>;
+  };
+  /** Populated when scoring leaned on SB lane because active list was empty. */
+  fallbackMode?: "no-active-schematics";
+  /** Always echoed back for UI ribbon text. */
+  characterProfessions: {
+    primary: string[];
+    secondary: string[];
+  };
+}
+
 // === Phase 3: verdicts ===
 
 export type VerdictTier = "CHASE" | "MAYBE" | "SKIP";
@@ -422,6 +469,9 @@ export interface IpcApi {
 
   // Phase 5 — Resource Finder (schematic-driven reverse search)
   rankResourcesForSchematic(input: FinderRankInput): Promise<FinderResult | null>;
+
+  // Phase 7 — New-player harvester planner
+  recommendHarvesters(input: PlannerInput): Promise<PlannerResult>;
 
   // Phase 4E — GH single-resource lookup
   lookupGhResource(input: GhLookupInput): Promise<GhLookupResponse>;

@@ -58,6 +58,20 @@ import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../core/verdict/c
 import { scoreGroup } from "../core/verdict/score";
 import type { ResourceStats, StatWeight } from "../core/verdict/types";
 import { recomputeVerdicts } from "./verdict/recompute";
+import {
+  HARVESTERS,
+  type HarvesterBucket as PlannerBucket,
+  type HarvesterSize as PlannerSize,
+  harvesterFor,
+} from "../core/planner/harvesters";
+import { resourceBucket } from "../core/planner/buckets";
+import { deploymentValue } from "../core/planner/score";
+import { allocate, type Candidate as PlannerCandidate } from "../core/planner/allocate";
+import type {
+  PlannerInput,
+  PlannerRecommendation,
+  PlannerResult,
+} from "../shared/ipc-types";
 
 interface GalaxyConfig {
   key: string;
@@ -1576,4 +1590,213 @@ export function registerIpc(): void {
       };
     },
   );
+
+  // === Phase 7: New-player harvester planner ===
+
+  ipcMain.handle(
+    "planner:recommend",
+    async (_evt, input: PlannerInput): Promise<PlannerResult> => {
+      const db = getDb();
+      const char = db.select().from(characters).where(eq(characters.id, input.characterId)).get();
+      if (!char) throw new Error(`Character not found: ${input.characterId}`);
+
+      // Load profession priorities so the SB-fallback path can weight by tier
+      // and so the result echoes the player's profession context back to the UI.
+      const priorityRows = db
+        .select()
+        .from(professionPriorities)
+        .where(eq(professionPriorities.characterId, input.characterId))
+        .all();
+      const primaryProfs = priorityRows.filter((p) => p.tier === "primary").map((p) => p.profession);
+      const secondaryProfs = priorityRows
+        .filter((p) => p.tier === "secondary")
+        .map((p) => p.profession);
+
+      // Latest snapshot for this character's galaxy.
+      const latest = db
+        .select()
+        .from(snapshots)
+        .where(eq(snapshots.galaxyId, char.galaxyId))
+        .orderBy(desc(snapshots.fetchedAt))
+        .limit(1)
+        .get();
+      if (!latest) {
+        return emptyPlannerResult(primaryProfs, secondaryProfs);
+      }
+
+      // Active schematic count drives the dichotomy: personal-verdict path
+      // vs SB-flag fallback path.
+      const activeCount = db
+        .select()
+        .from(activeSchematics)
+        .where(eq(activeSchematics.characterId, input.characterId))
+        .all().length;
+      const useFallback = activeCount === 0;
+
+      // Build resourceId → score map for the candidate generator. Two paths:
+      //   1. activeCount > 0: use verdict.score directly (already
+      //      profession-weighted via the active schematic list).
+      //   2. activeCount === 0 OR includeSbLane: max(SB score over the
+      //      character's primary/secondary professions, weighted by tier).
+      const scoreFor = new Map<string, number>();
+
+      if (!useFallback) {
+        const verdictRows = db
+          .select()
+          .from(verdicts)
+          .where(
+            and(
+              eq(verdicts.characterId, input.characterId),
+              eq(verdicts.snapshotId, latest.id),
+            ),
+          )
+          .all();
+        for (const v of verdictRows) {
+          scoreFor.set(v.resourceId, v.topScore);
+        }
+      }
+
+      // Either as primary path (fallback) or as blend (includeSbLane), pull SB flags.
+      if (useFallback || input.includeSbLane) {
+        const allFlags = db
+          .select()
+          .from(sbFlags)
+          .where(eq(sbFlags.snapshotId, latest.id))
+          .all();
+        for (const f of allFlags) {
+          let weight = 0;
+          if (primaryProfs.includes(f.forProfession)) weight = 1.0;
+          else if (secondaryProfs.includes(f.forProfession)) weight = 0.5;
+          if (weight === 0) continue;
+          const tierMult = f.tier === "SB_TOP" ? 1.0 : 0.7;
+          const effective = f.score * tierMult * weight;
+          // Blend mode: take max(verdict, sb effective). Fallback mode: sb alone.
+          const prev = scoreFor.get(f.resourceId) ?? 0;
+          if (effective > prev) scoreFor.set(f.resourceId, effective);
+        }
+      }
+
+      // Load resources for the snapshot + per-planet observations + type ancestry.
+      const obsRows = db
+        .select()
+        .from(resourceObservations)
+        .where(eq(resourceObservations.snapshotId, latest.id))
+        .all();
+      if (obsRows.length === 0) return emptyPlannerResult(primaryProfs, secondaryProfs);
+
+      const resourceIds = Array.from(new Set(obsRows.map((o) => o.resourceId)));
+      const resourceRows = db
+        .select()
+        .from(resources)
+        .where(inArray(resources.id, resourceIds))
+        .all();
+      const resourceById = new Map(resourceRows.map((r) => [r.id, r]));
+
+      const planetRows = db
+        .select()
+        .from(resourcePlanets)
+        .where(inArray(resourcePlanets.resourceId, resourceIds))
+        .all();
+
+      const typeIds = Array.from(new Set(resourceRows.map((r) => r.typeId)));
+      const tgEdges = db
+        .select()
+        .from(resourceTypeGroups)
+        .where(inArray(resourceTypeGroups.typeId, typeIds))
+        .all();
+      const typeAncestors = buildTypeAncestorMap(tgEdges);
+
+      // Build candidates. One per (resourceId, planet) at heavy size — heavy
+      // dominates lower sizes on deploymentValue across the board (BER is
+      // monotonic) so emitting all three sizes would only add candidates that
+      // never get picked. Player picks the actual size in-game; we recommend
+      // the optimal one.
+      const CONCENTRATION_FLOOR = 50;
+      const planetBias =
+        input.planetBias && input.planetBias !== "any" ? input.planetBias : null;
+
+      const candidates: PlannerCandidate[] = [];
+      for (const p of planetRows) {
+        if (p.concentration <= CONCENTRATION_FLOOR) continue;
+        if (planetBias && p.planet !== planetBias) continue;
+        const r = resourceById.get(p.resourceId);
+        if (!r) continue;
+        const ancestors = typeAncestors.get(r.typeId) ?? new Set([r.typeId]);
+        const bucket = resourceBucket(ancestors);
+        if (!bucket) continue;
+
+        const score = scoreFor.get(r.id) ?? 0;
+        if (score <= 0) continue;
+
+        const harvester = harvesterFor("heavy", bucket);
+        if (!harvester) continue;
+
+        const dv = deploymentValue({
+          resourceScore: score,
+          concentrationPct: p.concentration,
+          ber: harvester.ber,
+        });
+        const estDailyYield = (p.concentration / 100) * harvester.ber * 24;
+
+        candidates.push({
+          resourceId: r.id,
+          resourceName: r.name,
+          planet: p.planet,
+          concentrationPct: p.concentration,
+          resourceScore: score,
+          bucket,
+          size: harvester.size,
+          ber: harvester.ber,
+          deploymentValue: dv,
+          estDailyYield,
+        });
+      }
+
+      const result = allocate({
+        candidates,
+        lotsAvailable: input.lotsAvailable,
+        diversity: input.diversity,
+      });
+
+      const recommendations: PlannerRecommendation[] = result.selected.map((c) => {
+        const harv = harvesterFor(c.size, c.bucket);
+        return {
+          rank: c.rank,
+          resourceId: c.resourceId,
+          resourceName: c.resourceName,
+          bucket: c.bucket,
+          size: c.size,
+          harvesterLabel: harv?.label ?? `${c.size} ${c.bucket}`,
+          planet: c.planet,
+          concentrationPct: c.concentrationPct,
+          resourceScore: c.resourceScore,
+          deploymentValue: c.deploymentValue,
+          estDailyYield: c.estDailyYield,
+        };
+      });
+
+      return {
+        recommendations,
+        summary: result.summary,
+        fallbackMode: useFallback ? "no-active-schematics" : undefined,
+        characterProfessions: { primary: primaryProfs, secondary: secondaryProfs },
+      };
+    },
+  );
 }
+
+function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResult {
+  return {
+    recommendations: [],
+    summary: {
+      lotsUsed: 0,
+      totalDeploymentValue: 0,
+      bucketBreakdown: { mineral: 0, chemical: 0, energy: 0 },
+    },
+    characterProfessions: { primary, secondary },
+  };
+}
+
+// Re-exports so external callers can use these without reaching into core/planner.
+export { HARVESTERS };
+export type { PlannerBucket, PlannerSize };

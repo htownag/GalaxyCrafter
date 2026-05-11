@@ -6,6 +6,7 @@ import { ActiveSchematics } from "./routes/ActiveSchematics";
 import { Character } from "./routes/Character";
 import { Finder } from "./routes/Finder";
 import { Inventory } from "./routes/Inventory";
+import { Planner } from "./routes/Planner";
 import { ResourceDetail } from "./routes/ResourceDetail";
 import { Resources } from "./routes/Resources";
 import { SchematicDetail } from "./routes/SchematicDetail";
@@ -26,6 +27,7 @@ const router = createHashRouter([
       { path: "inventory", element: <Inventory /> },
       { path: "finder", element: <Finder /> },
       { path: "finder/:schematicId", element: <Finder /> },
+      { path: "planner", element: <Planner /> },
       { path: "character", element: <Character /> },
     ],
   },

@@ -45,6 +45,9 @@ const api: IpcApi = {
   // Phase 5 — Resource Finder
   rankResourcesForSchematic: (input) => ipcRenderer.invoke("finder:rank", input),
 
+  // Phase 7 — New-player harvester planner
+  recommendHarvesters: (input) => ipcRenderer.invoke("planner:recommend", input),
+
   // Phase 4E — GH single-resource lookup
   lookupGhResource: (input) => ipcRenderer.invoke("gh:lookupResource", input),
   onVerdictsUpdated: (listener) => {
