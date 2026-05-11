@@ -1,11 +1,13 @@
 import type {
   InventoryEntry,
   Resource,
+  SbFlagEntry,
   SnapshotSummary,
   StatKey,
   VerdictEntry,
 } from "@shared/ipc-types";
 import { STAT_KEYS } from "@shared/ipc-types";
+import { PROFESSIONS } from "@shared/professions";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
@@ -47,6 +49,51 @@ function VerdictPill({ verdict }: { verdict: VerdictEntry }): JSX.Element {
 // already have this, but if nothing else can get more of it"). Supersedes
 // the verdict pill — the chase signal is meaningless once you own the
 // resource. Tooltip surfaces units + status + notes for context.
+// Compact server-best cluster. A resource can have multiple flags
+// (different professions). SB_TOP renders as a filled chip; SB_NEAR as
+// outlined. Title surfaces full reasoning: "SB_TOP for Weaponsmith
+// (94.2 vs server top 94.2 on weapon_rifle_t21)".
+function SbBadgeCluster({ flags }: { flags: SbFlagEntry[] }): JSX.Element {
+  if (flags.length === 0) return <span className="text-slate-700">—</span>;
+  // Sort: TOP before NEAR, then by score descending. Best signal first.
+  const sorted = [...flags].sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier === "SB_TOP" ? -1 : 1;
+    return b.score - a.score;
+  });
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {sorted.map((f) => {
+        const profName =
+          PROFESSIONS.find((p) => p.id === f.forProfession)?.name ?? f.forProfession;
+        const cls =
+          f.tier === "SB_TOP"
+            ? "bg-yellow-900/50 border-yellow-700 text-yellow-200"
+            : "bg-transparent border-yellow-800 text-yellow-300/70";
+        const title = `${f.tier} for ${profName}: ${f.score.toFixed(1)} vs server top ${f.topScoreOnSnapshot.toFixed(1)}${f.schematicId ? ` on ${f.schematicId}` : ""}`;
+        // Profession initials — short label so the cluster fits in a row
+        // without wrap-blowout. e.g. "WS" for Weaponsmith, "BE" for Bio-Engineer.
+        const initials = profName
+          .split(/[\s\-]/)
+          .map((w) => w[0]?.toUpperCase() ?? "")
+          .join("")
+          .slice(0, 2);
+        return (
+          <span
+            key={`${f.forProfession}|${f.tier}`}
+            className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium font-mono ${cls}`}
+            title={title}
+          >
+            <span className="text-[9px] mr-0.5 opacity-80">
+              {f.tier === "SB_TOP" ? "★" : "☆"}
+            </span>
+            {initials}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function OwnedTag({ entry }: { entry: InventoryEntry }): JSX.Element {
   // Slate-cyan family — distinct from emerald (CHASE) / amber (MAYBE).
   // Status modulates the saturation: live = brighter, despawned = muted,
@@ -76,6 +123,10 @@ export function Resources(): JSX.Element {
   const [resources, setResources] = useState<Resource[]>([]);
   const [verdictsById, setVerdictsById] = useState<Map<string, VerdictEntry>>(new Map());
   const [inventoryById, setInventoryById] = useState<Map<string, InventoryEntry>>(new Map());
+  // SB flags are galaxy-wide (not character-specific). Map keyed by
+  // resourceId to an array since a resource can have multiple flags
+  // (e.g. SB_TOP_for_weaponsmith + SB_NEAR_for_armorsmith).
+  const [sbByResource, setSbByResource] = useState<Map<string, SbFlagEntry[]>>(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +146,18 @@ export function Resources(): JSX.Element {
       if (snap) {
         const list = await window.api.listResources();
         setResources(list);
+
+        // SB flags are galaxy-wide regardless of whether a character exists,
+        // but only meaningful when we know which galaxy (use the snapshot's).
+        const sbList = await window.api.listSbFlags(snap.galaxyId);
+        const sbMap = new Map<string, SbFlagEntry[]>();
+        for (const f of sbList) {
+          const arr = sbMap.get(f.resourceId) ?? [];
+          arr.push(f);
+          sbMap.set(f.resourceId, arr);
+        }
+        setSbByResource(sbMap);
+
         if (character) {
           const [vs, inv] = await Promise.all([
             window.api.listVerdicts(character.id),
@@ -110,6 +173,7 @@ export function Resources(): JSX.Element {
         setResources([]);
         setVerdictsById(new Map());
         setInventoryById(new Map());
+        setSbByResource(new Map());
       }
     } catch (e) {
       setError(String(e));
@@ -291,6 +355,29 @@ export function Resources(): JSX.Element {
                   {" OWNED"}
                 </>
               )}
+              {sbByResource.size > 0 && (
+                <>
+                  {" · "}
+                  <span className="text-yellow-300">
+                    {
+                      Array.from(sbByResource.values()).filter((flags) =>
+                        flags.some((f) => f.tier === "SB_TOP"),
+                      ).length
+                    }
+                  </span>
+                  {" SB ★ / "}
+                  <span className="text-yellow-400/70">
+                    {
+                      Array.from(sbByResource.values()).filter(
+                        (flags) =>
+                          !flags.some((f) => f.tier === "SB_TOP") &&
+                          flags.some((f) => f.tier === "SB_NEAR"),
+                      ).length
+                    }
+                  </span>
+                  {" ☆"}
+                </>
+              )}
               {sortKey && (
                 <>
                   {" · sorted by "}
@@ -385,6 +472,12 @@ export function Resources(): JSX.Element {
                     Group{sortArrow("group")}
                   </th>
                   <th className="px-3 py-2 text-left font-medium">Planets</th>
+                  <th
+                    className="px-2 py-2 text-left font-medium"
+                    title="Server-best flags — rare/valuable across all professions, independent of your craft list"
+                  >
+                    SB
+                  </th>
                   {STAT_KEYS.map((s) => (
                     <th
                       key={s}
@@ -401,7 +494,7 @@ export function Resources(): JSX.Element {
                 {filtered.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={4 + STAT_KEYS.length + (character ? 1 : 0)}
+                      colSpan={5 + STAT_KEYS.length + (character ? 1 : 0)}
                       className="px-3 py-6 text-center text-slate-400"
                     >
                       No resources match <span className="text-slate-300">"{search}"</span>
@@ -438,6 +531,9 @@ export function Resources(): JSX.Element {
                         <td className="px-3 py-2 text-slate-200">{r.typeDisplayName}</td>
                         <td className="px-3 py-2 text-slate-400 font-mono text-xs">{r.groupId}</td>
                         <td className="px-3 py-2 text-slate-400 text-xs">{r.planets.join(", ")}</td>
+                        <td className="px-2 py-2">
+                          <SbBadgeCluster flags={sbByResource.get(r.id) ?? []} />
+                        </td>
                         {STAT_KEYS.map((s) => {
                           const stat = r.stats[s];
                           return (

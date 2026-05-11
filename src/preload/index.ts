@@ -31,6 +31,9 @@ const api: IpcApi = {
   listVerdicts: (characterId) => ipcRenderer.invoke("verdicts:list", characterId),
   getResourceDetail: (resourceId) => ipcRenderer.invoke("resources:detail", resourceId),
 
+  // Phase 8a — server-best flags
+  listSbFlags: (galaxyId) => ipcRenderer.invoke("sbFlags:list", galaxyId),
+
   // Phase 4 — inventory
   listInventory: (characterId) => ipcRenderer.invoke("inventory:list", characterId),
   upsertInventory: (input) => ipcRenderer.invoke("inventory:upsert", input),

@@ -190,6 +190,77 @@ export function ResourceDetail(): JSX.Element {
         <StatPanel stats={detail.stats} caps={detail.caps} floors={detail.floors} />
       </section>
 
+      {detail.sbFlags.length > 0 && (
+        <section className="mb-8">
+          <h3 className="text-sm font-medium text-slate-300 mb-2">
+            Server-best ({detail.sbFlags.length} profession
+            {detail.sbFlags.length === 1 ? "" : "s"})
+          </h3>
+          <p className="text-xs text-slate-400 mb-2">
+            How this resource ranks across crafting professions, independent of your active list.
+            ★ = the best-known score for that profession on the current snapshot. ☆ = within 5% of
+            it.
+          </p>
+          <div className="overflow-x-auto rounded-md border border-slate-700">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800 text-slate-300">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Profession</th>
+                  <th className="px-3 py-2 text-left font-medium">Tier</th>
+                  <th className="px-3 py-2 text-right font-medium">Score</th>
+                  <th className="px-3 py-2 text-right font-medium">Server top</th>
+                  <th className="px-3 py-2 text-left font-medium">Best schematic</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...detail.sbFlags]
+                  .sort((a, b) => {
+                    if (a.tier !== b.tier) return a.tier === "SB_TOP" ? -1 : 1;
+                    return b.score - a.score;
+                  })
+                  .map((f) => (
+                    <tr
+                      key={`${f.forProfession}|${f.tier}`}
+                      className="border-t border-slate-700 hover:bg-slate-800/50"
+                    >
+                      <td className="px-3 py-2 text-slate-200">{f.forProfession}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${
+                            f.tier === "SB_TOP"
+                              ? "bg-yellow-900/50 border-yellow-700 text-yellow-200"
+                              : "bg-transparent border-yellow-800 text-yellow-300/70"
+                          }`}
+                        >
+                          {f.tier === "SB_TOP" ? "★ SB_TOP" : "☆ SB_NEAR"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-emerald-300">
+                        {f.score.toFixed(1)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-400">
+                        {f.topScoreOnSnapshot.toFixed(1)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {f.schematicId ? (
+                          <Link
+                            to={`/schematics/${f.schematicId}`}
+                            className="text-emerald-400 hover:text-emerald-300 font-mono text-xs"
+                          >
+                            {f.schematicId}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-700">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {detail.inventory && (
         <section className="mb-8">
           <h3 className="text-sm font-medium text-slate-300 mb-2">In your Crates</h3>

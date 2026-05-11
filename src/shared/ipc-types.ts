@@ -274,6 +274,22 @@ export interface VerdictEntry {
   matchedSchematicCount: number;
 }
 
+// === Phase 8a: Server-Best flags ===
+
+export type SbTier = "SB_TOP" | "SB_NEAR";
+
+export interface SbFlagEntry {
+  resourceId: string;
+  forProfession: string; // profession id, e.g. 'weaponsmith'
+  tier: SbTier;
+  /** The resource's score on its best (schematic, propertyGroup) for this profession. */
+  score: number;
+  /** Server-best score this profession reached at all on that snapshot. */
+  topScoreOnSnapshot: number;
+  /** Schematic id that produced the score. */
+  schematicId: string | null;
+}
+
 /**
  * Single (schematic, property-group) match for a resource. Matches the
  * shape persisted in `verdicts.breakdown_json`.
@@ -347,6 +363,10 @@ export interface ResourceDetail {
   // Phase 4D surfaces this on the detail page as a dedicated section so
   // owned resources clearly show "you have X units, status, notes."
   inventory: InventoryEntry | null;
+
+  // Server-best flags for this resource on the latest snapshot, across
+  // all 8 crafting professions. Empty array when no flags. Phase 8a.
+  sbFlags: SbFlagEntry[];
 }
 
 export interface SchematicListFilter {
@@ -387,6 +407,9 @@ export interface IpcApi {
   // Phase 3 — verdicts
   listVerdicts(characterId: string): Promise<VerdictEntry[]>;
   getResourceDetail(resourceId: string): Promise<ResourceDetail | null>;
+
+  // Phase 8a — server-best flags (orthogonal to verdicts; galaxy-wide)
+  listSbFlags(galaxyId: number): Promise<SbFlagEntry[]>;
 
   // Phase 4 — inventory
   listInventory(characterId: string): Promise<InventoryEntry[]>;

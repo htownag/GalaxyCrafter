@@ -14,6 +14,7 @@ import {
   resourceTypeGroups,
   resourceTypes,
   resources,
+  sbFlags,
   schematicDependencies,
   schematicPropertyGroups,
   schematicPropertyWeights,
@@ -25,6 +26,7 @@ import {
 } from "../db/schema";
 import { lookupResourceByName } from "../ingest/gh-lookup";
 import { runIngest } from "../ingest/pipeline";
+import { recomputeSbFlagsForSnapshot } from "./sb-flags/compute";
 import type {
   ActiveSchematicEntry,
   Character,
@@ -42,6 +44,7 @@ import type {
   Resource,
   ResourceDetail,
   ResourceTypeRef,
+  SbFlagEntry,
   ScoredMatchView,
   SchematicDetail,
   SchematicListFilter,
@@ -146,6 +149,17 @@ export function registerIpc(): void {
     const galaxy = galaxiesByKey[key];
     if (!galaxy) throw new Error(`Unknown galaxy key: ${key}`);
     const result = await runIngest(galaxy.id);
+    // Server-best (SB) flag compute — once per snapshot, galaxy-wide,
+    // independent of any character's craft list. Must run before the
+    // verdict recompute so the verdict cache reflects fresh SB context.
+    try {
+      const sb = recomputeSbFlagsForSnapshot(galaxy.id, result.snapshot.id);
+      console.log(
+        `[sb] galaxy ${galaxy.id}: ${sb.topFlags} SB_TOP / ${sb.nearFlags} SB_NEAR across ${sb.schematicsConsidered} schematics in ${sb.durationMs}ms`,
+      );
+    } catch (e) {
+      console.error(`[sb] compute failed for snapshot ${result.snapshot.id}:`, e);
+    }
     // Implicit verdict recompute: the new snapshot has fresh stat data
     // and may include new spawns; verdicts depend on both.
     recomputeForGalaxy(galaxy.id);
@@ -678,6 +692,29 @@ export function registerIpc(): void {
     }));
   });
 
+  ipcMain.handle("sbFlags:list", async (_evt, galaxyId: number): Promise<SbFlagEntry[]> => {
+    const db = getDb();
+    // Latest snapshot for this galaxy. SB flags are tied to a snapshot
+    // (computed once per ingest); the renderer cares only about current.
+    const latest = db
+      .select()
+      .from(snapshots)
+      .where(eq(snapshots.galaxyId, galaxyId))
+      .orderBy(desc(snapshots.fetchedAt))
+      .limit(1)
+      .get();
+    if (!latest) return [];
+    const rows = db.select().from(sbFlags).where(eq(sbFlags.snapshotId, latest.id)).all();
+    return rows.map((r) => ({
+      resourceId: r.resourceId,
+      forProfession: r.forProfession,
+      tier: r.tier as SbFlagEntry["tier"],
+      score: r.score,
+      topScoreOnSnapshot: r.topScoreOnSnapshot,
+      schematicId: r.schematicId,
+    }));
+  });
+
   ipcMain.handle(
     "resources:detail",
     async (_evt, resourceId: string): Promise<ResourceDetail | null> => {
@@ -814,6 +851,34 @@ export function registerIpc(): void {
         }
       }
 
+      // Server-best flags for this resource on the latest galaxy snapshot.
+      // Independent of character — pulled per snapshot at ingest time.
+      let sbFlagsList: SbFlagEntry[] = [];
+      const latestForGalaxy = db
+        .select()
+        .from(snapshots)
+        .where(eq(snapshots.galaxyId, r.galaxyId))
+        .orderBy(desc(snapshots.fetchedAt))
+        .limit(1)
+        .get();
+      if (latestForGalaxy) {
+        const flagRows = db
+          .select()
+          .from(sbFlags)
+          .where(
+            and(eq(sbFlags.resourceId, r.id), eq(sbFlags.snapshotId, latestForGalaxy.id)),
+          )
+          .all();
+        sbFlagsList = flagRows.map((f) => ({
+          resourceId: f.resourceId,
+          forProfession: f.forProfession,
+          tier: f.tier as SbFlagEntry["tier"],
+          score: f.score,
+          topScoreOnSnapshot: f.topScoreOnSnapshot,
+          schematicId: f.schematicId,
+        }));
+      }
+
       // Inventory entry for this resource on the active character, if any.
       let inventory: InventoryEntry | null = null;
       if (activeCharId) {
@@ -875,6 +940,7 @@ export function registerIpc(): void {
         verdict: verdictView,
         fitsActiveSchematics,
         inventory,
+        sbFlags: sbFlagsList,
       };
     },
   );
