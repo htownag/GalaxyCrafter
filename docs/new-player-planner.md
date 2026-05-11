@@ -19,10 +19,10 @@ The planner runs in the context of an **active character** (existing UI flow). F
 
 User-supplied inputs on the planner page itself:
 
-- **Lot budget** (default 10). Some players will have a different cap if they're not new — slider 1..20.
-- **Already-deployed harvesters** (lots in use). Subtract from budget. Default 0.
-- **Credit budget** (optional). If set, the greedy fill respects it; if blank, ignore credit cost in optimization.
+- **Lots available for harvesters** (0..10, default 10). The hard cap is always 10 — that's the SWG lot rule. The player drops this when they've used some lots for a house, factory, or vendor; the planner respects whatever they enter. No need for an "already deployed" subtractor — the field IS the available-for-harvesters number.
 - **Planet bias** (optional). Drop-down: "any" / pick a specific planet. Lets players who've committed to a home planet bias toward it.
+
+**No credit budget input.** Structure costs vary by server (and by patch) and we have no reliable way to know SR2's current numbers — Ryan called that explicitly. The planner ignores credit cost; player makes the size choice based on their own wallet awareness.
 
 ## 2. Harvester model
 
@@ -36,18 +36,18 @@ SWG harvester types in 2 dimensions: **size** (personal / medium / heavy) and **
 
 If the player asks "what about water / flora?" the answer is "out of scope for v1; v1 of the planner is the 80% case, not exhaustive coverage."
 
-Each (size, bucket) combination has approximate stats — Core3 values are server-tunable, so we'll hardcode SR2's published numbers and document the source. Rough table to be confirmed against SR2's `harvester.lua` data:
+Each (size, bucket) combination has approximate stats — Core3 values are server-tunable, so we'll ship SR2's published numbers and document the source. Only **BER** drives the v1 scoring; hopper is shown to the player as informational; cost/maintenance are excluded from v1 per the no-credit-budget decision. Rough table to be confirmed against SR2's `harvester.lua` data:
 
-| Size | BER | Hopper | Cost (credits) | Maintenance/hr | Lots |
-|------|----:|-------:|---------------:|---------------:|-----:|
-| Personal mineral/chemical | 8  | 30000 | ~5000  | ~5  | 1 |
-| Personal energy           | 6  | 30000 | ~5000  | ~5  | 1 |
-| Medium mineral/chemical   | 12 | 45000 | ~50000 | ~10 | 1 |
-| Medium energy             | 8  | 45000 | ~50000 | ~10 | 1 |
-| Heavy mineral/chemical    | 16 | 60000 | ~150000| ~20 | 1 |
-| Heavy energy              | 11 | 60000 | ~150000| ~20 | 1 |
+| Size | BER | Hopper | Lots |
+|------|----:|-------:|-----:|
+| Personal mineral/chemical | 8  | 30000 | 1 |
+| Personal energy           | 6  | 30000 | 1 |
+| Medium mineral/chemical   | 12 | 45000 | 1 |
+| Medium energy             | 8  | 45000 | 1 |
+| Heavy mineral/chemical    | 16 | 60000 | 1 |
+| Heavy energy              | 11 | 60000 | 1 |
 
-**Source-of-truth target:** rather than hardcode in TypeScript, ship a `reference-data/harvesters.json` file with provenance metadata, mirroring how `schematics.json` and `galaxies.json` are loaded. Lets the player override / fork the numbers if their server's tuning differs.
+**Source-of-truth target:** rather than hardcode in TypeScript, ship a `reference-data/harvesters.json` file with provenance metadata, mirroring how `schematics.json` and `galaxies.json` are loaded. The JSON keeps the full stat set (BER + hopper + cost + maintenance) for forward compatibility; v1 only reads BER + hopper.
 
 ## 3. Scoring model
 
@@ -73,28 +73,25 @@ Reads as **expected score-weighted units of useful resource per day on that lot*
 candidates = all (resource, planet, size, bucket) tuples spawning right now
             where resource fits the bucket's resource group
             AND resource.score (verdict.score) > 0
-            AND concentration(resource, planet) > 50  (configurable floor)
+            AND concentration(resource, planet) > 50  (hard floor, confirmed)
 
 sorted = candidates sorted desc by deploymentValue
 
 selected = []
-lotsRemaining = budget
-creditsRemaining = creditBudget ?? ∞
+lotsRemaining = lotsAvailable     // from input, 0..10
 bucketCount = { mineral: 0, chemical: 0, energy: 0 }
 
 for c in sorted:
   if lotsRemaining <= 0: break
-  if c.cost > creditsRemaining: continue
   if c.resourceId in selected.resourceIds: continue  // dedup
-  // Bucket diversity: cap any single bucket at ceil(budget × 0.6) unless
-  // the player explicitly disables diversity (some specialists want
-  // all-mineral). Prevents the greedy from filling 10/10 with mineral
-  // just because mineral scores best on this snapshot.
-  if bucketCount[c.bucket] >= ceil(budget × 0.6) && diversityOn: continue
+  // Bucket diversity: cap any single bucket at ceil(lotsAvailable × 0.6)
+  // unless the player explicitly disables diversity. Prevents the greedy
+  // from filling 10/10 with mineral just because mineral scores best on
+  // this snapshot.
+  if bucketCount[c.bucket] >= ceil(lotsAvailable × 0.6) && diversityOn: continue
 
   selected.push(c)
   lotsRemaining -= 1
-  creditsRemaining -= c.cost
   bucketCount[c.bucket] += 1
 
 return selected
@@ -109,15 +106,13 @@ return selected
 Layout: two-pane.
 
 **Left — inputs + summary.**
-- Lot budget slider (1..20, default 10)
-- Already-deployed input (default 0)
-- Credit budget input (optional, blank = no constraint)
+- "Lots available for harvesters" number input (0..10, default 10)
 - Planet bias dropdown (default "any")
 - Diversity toggle (default on)
 - "Include market-value flagged resources" toggle (default off)
 - Profession context summary (read-only): "Primary: Architect, Secondary: Weaponsmith — drives scoring"
-- "Run plan" button (recomputes on input change with 250ms debounce so the page feels live)
-- Plan summary card: "10 harvesters · ~520k credits · projected score-weighted yield = X"
+- Plan recomputes on input change (250ms debounce so the page feels live; no manual "Run" button)
+- Plan summary card: "N harvesters · projected score-weighted yield = X · bucket split M/C/E"
 
 **Right — recommendation list.**
 - Ordered table, rank 1..N.
@@ -135,10 +130,8 @@ Types:
 ```ts
 interface PlannerInput {
   characterId: string;
-  lotBudget: number;
-  alreadyDeployed: number;
-  creditBudget?: number;
-  planetBias?: string;     // 'any' or planet name
+  lotsAvailable: number;     // 0..10, default 10
+  planetBias?: string;       // 'any' or planet name
   diversity: boolean;
   includeSbLane: boolean;
 }
@@ -154,17 +147,16 @@ interface PlannerRecommendation {
   resourceScore: number;          // 0..100, verdict.score
   deploymentValue: number;        // raw score, internal
   estDailyYield: number;          // BER × conc × 24
-  costCredits: number;
 }
 
 interface PlannerResult {
   recommendations: PlannerRecommendation[];
   summary: {
     lotsUsed: number;
-    totalCostCredits: number;
     totalProjectedScore: number;
     bucketBreakdown: Record<'mineral'|'chemical'|'energy', number>;
   };
+  fallbackMode?: 'no-active-schematics';  // populated when scoring leaned on SB lane because active list is empty
 }
 ```
 
@@ -195,13 +187,15 @@ interface PlannerResult {
 
 Loaded at startup like `schematics.json` and `resource-types.json`. SR2's published stats are the source; provenance metadata tracks where they came from so a future fork can diff.
 
-## 8. Open questions
+## 8. Open questions — RESOLVED 2026-05-11
 
-- **Concentration floor.** §4 uses `concentration > 50` as a hard floor. Real SWG harvesters extract from anything > 0 (just slowly). For a new-player planner, 50 is the right threshold; for an experienced player on a tight planet, maybe lower. Punt to v1.1 as a slider.
-- **"Energy" bucket coverage.** Wind + solar split is real (wind on Talus, solar on Tatooine, etc.). Treat as one bucket for v1; if recommendation results feel weird we revisit.
-- **Resource-shift awareness.** A resource that's about to despawn in 6 hours isn't a great pick. We don't currently store despawn-prediction confidence. Punt; ship without it.
-- **Maintenance / power.** A heavy harvester costs ~20 credits/hour maintenance. Should the credit budget include that as a projected monthly drain? Probably yes — bake a "ongoing cost per day" into the summary card so the player sees `~520k upfront + ~480/day maintenance`.
-- **Player has no schematics yet.** Verdict engine returns mostly 0-score in that case. Fallback: when active schematic count = 0, score by SB flag × profession-priority weight only. Otherwise the planner is empty for brand-new players, defeating the purpose.
+- **Concentration floor → 50.** Hard floor at `concentration > 50`. Locked.
+- **Energy bucket → one bucket.** Wind + solar collapsed. Locked.
+- **Resource-shift awareness → punt.** No despawn signal in v1.
+- **Maintenance / power → skip.** No credit modeling at all in v1 (servers vary too much; no reliable source for SR2's current numbers).
+- **Player has no active schematics yet → two-track answer.**
+  - **UI nudge:** if active schematic count = 0, render a callout at the top of the recommendation list: "You have no active schematics. The planner is using **current chase resources** for your profession. [Add schematics →]" (link to /schematics).
+  - **Scoring fallback:** when active list is empty, score by SB flag × profession-priority weight only (the SB lane already encodes "what's currently TOP/NEAR across the bundled schematic library for profession X"). Result populates `PlannerResult.fallbackMode = 'no-active-schematics'` so the UI can surface the callout.
 
 ## 9. Out of scope (intentionally)
 
