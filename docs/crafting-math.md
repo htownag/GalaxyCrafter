@@ -318,11 +318,14 @@ So a player with 110 exp skill has 11 points. The player chooses how to distribu
 
 ### 9.0 Scope pin (Phase 6 v1)
 
-**In scope (v1):** Artisan, Weaponsmith, Armorsmith, Architect, Chef, Tailor — the 6 generic-path professions in `PROFESSIONS` (`src/shared/professions.ts`) whose `skillGroupPrefixes` resolve to schematics that flow through `ResourceLabratory`. The standard `craftingValues` map (per-attribute current% + max%) fully captures their meaningful output, so the simulator's predicted craftingValues IS the answer for these professions.
+**In scope (v1):** Artisan, Weaponsmith, Armorsmith, Architect, Chef — the 5 generic-path professions in `PROFESSIONS` (`src/shared/professions.ts`) whose `skillGroupPrefixes` resolve to schematics with resource-driven percentage output that meaningfully affects player value (damage, armor effectiveness, structure HP, food stat-buff strength + duration, basic component quality). The standard `craftingValues` map fully captures their meaningful output, so the simulator's predicted craftingValues IS the answer for these professions.
+
+**Server-tweak disclaimer (UI footnote):** the simulator uses **vanilla Core3 formulas**. Your server may apply small balance tweaks (SR2 currently applies a +5% experimentation-roll bonus, a per-schematic armor belt skip, and a DOT-component contribution path on weapons; see §11). Predicted output is a baseline, not a server-exact figure. **Render this verbatim as small-print at the bottom of the simulator page.**
 
 **Out of v1 scope, deferred:**
-- **Droid Engineer (v1.1)** — generic crafting math works (DroidLabratory is a 20-LOC stub inheriting ResourceLabratory) but a droid-engineer player needs the **derived stats rollup** (HP, speed, hit, damage, skill bonus per chassis type via `DroidMechanics.h`), not raw `craftingValues`. Shipping v1 without this gives droid engineers a screen that doesn't answer their question. v1.1 adds a `derivedStats: { chassisType, ham, speed, hit, minDmg, maxDmg, skillBonus }` field to the simulator output when `prototype.gameObjectType === DROID_COMPONENT`, populated via the `DroidMechanics` statics.
-- **Bio Engineer (v1.2 / Phase 6.5)** — genuine math fork (`GeneticLabratory`, see §10). Needs parallel `simulateBio` IPC channel with separate input schema (DnaComponent slots), output schema (creature-stat fields), and value-range scaling (`× 2000.f` instead of × 1).
+- **Tailor (paused).** Player rationale: clothing / jewellery `skillModBonus` outputs are tunable via crafting but in practice players don't agonise over tailoring resource quality the way weapons / armor / structure crafters do. Revisit once we have field signal that anyone's asking for it.
+- **Droid Engineer (paused).** Generic crafting math works (DroidLabratory is a 20-LOC stub inheriting ResourceLabratory) but the meaningful output is the DroidMechanics-derived rollup (HP, speed, hit, damage, skill bonus per chassis), not raw `craftingValues`. Shipping a screen that shows only craftingValues for droids gives a droid engineer nothing useful. Add later as a derived-stats add-on on the same simulator core, gated on `gameObjectType === DROID_COMPONENT`.
+- **Bio Engineer (paused; later iteration).** Genuine math fork (`GeneticLabratory`, see §10). Needs a parallel `simulateBio` IPC channel with separate input schema (DnaComponent slots), output schema (creature-stat fields), and value-range scaling (`× 2000.f` instead of × 1).
 
 ### 9.1 Pure-math core (`src/core/simulator/`)
 
@@ -393,9 +396,11 @@ Big red modal before the bake step: "You're about to lock in `craftingValues` fo
 
 ---
 
-## 11. SR2 fork deltas (target server)
+## 11. SR2 fork deltas (target server) — documented, not modeled in v1
 
-The SR2 fork (`~/workspace/srswgemu2/`) is **GalaxyCrafter's primary target server**. Three crafting-math divergences from vanilla Core3 exist on master as of 2026-05-11. The simulator must model these.
+The SR2 fork (`~/workspace/srswgemu2/`) is **GalaxyCrafter's primary target server**. Three crafting-math divergences from vanilla Core3 exist on master as of 2026-05-11. **The v1 simulator does NOT model these** — it runs vanilla Core3 formulas and renders the §9.0 disclaimer footnote on the simulator page so the player knows the predicted output is a baseline, not server-exact.
+
+These deltas are catalogued below for future reference (and as a "stop and decide" tripwire if a player reports that simulator predictions are systematically off on SR2).
 
 ### 11.1 Experimentation roll +5% bonus (all rolls, all schematics)
 
