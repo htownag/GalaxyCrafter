@@ -618,21 +618,43 @@ export function registerIpc(): void {
             .from(schematicDependencies)
             .where(eq(schematicDependencies.parentSchematicId, schematicId))
             .all();
+
+          // Prefer the Advanced variant when one exists. Convention: SWG's
+          // pre-baked advanced schematics share their base's id with an
+          // "_advanced" suffix (weapon_component_sword_core ->
+          // weapon_component_sword_core_advanced). IFF substitutability
+          // means the parent slot fits both — the advanced version is
+          // strictly better when craftable. Verified: 33 of 282 child
+          // schematics have an _advanced sibling on the bundled GH set.
+          // Batch existence check to avoid N round-trips.
+          const advancedCandidateIds = deps.map((d) => `${d.childSchematicId}_advanced`);
+          const advancedRows =
+            advancedCandidateIds.length > 0
+              ? tx
+                  .select({ id: schematics.id })
+                  .from(schematics)
+                  .where(inArray(schematics.id, advancedCandidateIds))
+                  .all()
+              : [];
+          const advancedExists = new Set(advancedRows.map((r) => r.id));
+
           for (const d of deps) {
-            if (!existingSet.has(d.childSchematicId)) {
+            const advId = `${d.childSchematicId}_advanced`;
+            const childId = advancedExists.has(advId) ? advId : d.childSchematicId;
+            if (!existingSet.has(childId)) {
               tx.insert(activeSchematics)
                 .values({
                   characterId,
-                  schematicId: d.childSchematicId,
+                  schematicId: childId,
                   source: "inherited",
                   parentSchematicId: schematicId,
                   addedAt: now,
                 })
                 .run();
-              added.push(d.childSchematicId);
-              existingSet.add(d.childSchematicId);
+              added.push(childId);
+              existingSet.add(childId);
             } else {
-              skipped.push(d.childSchematicId);
+              skipped.push(childId);
             }
           }
         }
