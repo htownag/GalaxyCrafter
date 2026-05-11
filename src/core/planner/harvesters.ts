@@ -16,6 +16,8 @@ export interface HarvesterDef {
   hopper: number;
   lots: number;
   installationType: number;
+  /** Optional human-readable note (e.g. "no size variants for energy"). */
+  note?: string;
 }
 
 interface HarvesterFile {

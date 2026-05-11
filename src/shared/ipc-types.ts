@@ -277,6 +277,13 @@ export interface PlannerInput {
   diversity: boolean;
   /** Mix SB-flag scores into personal verdicts. Forced on when active list is empty. */
   includeSbLane: boolean;
+  /**
+   * Score by PE (Potential Energy) stat instead of profession verdict. Surfaces
+   * high-PE fuel resources — radioactive minerals, petrochem-fuel chemicals,
+   * solar/wind energy spawns — for fueling power generators. Bypasses verdict
+   * and SB-lane scoring entirely; concentration floor still applies.
+   */
+  buildPowerReserves: boolean;
 }
 
 export interface PlannerRecommendation {
@@ -300,8 +307,9 @@ export interface PlannerResult {
     totalDeploymentValue: number;
     bucketBreakdown: Record<HarvesterBucket, number>;
   };
-  /** Populated when scoring leaned on SB lane because active list was empty. */
-  fallbackMode?: "no-active-schematics";
+  /** Populated when scoring leaned on SB lane because active list was empty,
+   * OR when buildPowerReserves is on (PE-driven scoring). */
+  fallbackMode?: "no-active-schematics" | "power-reserves";
   /** Always echoed back for UI ribbon text. */
   characterProfessions: {
     primary: string[];

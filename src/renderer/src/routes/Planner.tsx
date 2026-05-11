@@ -39,6 +39,7 @@ export function Planner(): JSX.Element {
   const [planetBias, setPlanetBias] = useState<string>("any");
   const [diversity, setDiversity] = useState(true);
   const [includeSbLane, setIncludeSbLane] = useState(false);
+  const [buildPowerReserves, setBuildPowerReserves] = useState(false);
   const [result, setResult] = useState<PlannerResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +55,7 @@ export function Planner(): JSX.Element {
         planetBias: planetBias === "any" ? undefined : planetBias,
         diversity,
         includeSbLane,
+        buildPowerReserves,
       });
       setResult(res);
     } catch (e) {
@@ -61,7 +63,7 @@ export function Planner(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [character, lotsAvailable, planetBias, diversity, includeSbLane]);
+  }, [character, lotsAvailable, planetBias, diversity, includeSbLane, buildPowerReserves]);
 
   // 250ms debounce on input changes so the page feels live without thrashing.
   useEffect(() => {
@@ -133,10 +135,26 @@ export function Planner(): JSX.Element {
                 type="checkbox"
                 checked={includeSbLane}
                 onChange={(e) => setIncludeSbLane(e.target.checked)}
+                disabled={buildPowerReserves}
+                className="rounded border-slate-600 bg-slate-800 disabled:opacity-40"
+              />
+              <span className={buildPowerReserves ? "opacity-40" : ""}>
+                Include market-value flagged resources
+              </span>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer mt-2 pt-2 border-t border-slate-800">
+              <input
+                type="checkbox"
+                checked={buildPowerReserves}
+                onChange={(e) => setBuildPowerReserves(e.target.checked)}
                 className="rounded border-slate-600 bg-slate-800"
               />
-              Include market-value flagged resources
+              Build power reserves (rank by PE)
             </label>
+            <p className="text-[11px] text-slate-500 mt-1 ml-6 leading-tight">
+              Surfaces high-Potential-Energy resources for fueling power generators
+              (radioactives, petrochem fuels, solar/wind). Overrides profession scoring.
+            </p>
           </InputCard>
 
           {result && (
@@ -199,6 +217,16 @@ export function Planner(): JSX.Element {
                 add the schematics you craft
               </Link>
               .
+            </div>
+          )}
+
+          {result?.fallbackMode === "power-reserves" && (
+            <div className="mb-4 p-3 rounded-md border border-purple-800 bg-purple-950/30 text-purple-200 text-sm">
+              <strong className="font-semibold">Power-reserves mode.</strong> Ranked by PE
+              (Potential Energy) instead of profession scoring. Pick a Heavy Mineral Extractor on
+              radioactives, Heavy Chemical Extractor on petrochem fuels, or Solar/Wind Generator on
+              high-PE energy spawns — these resources feed your fusion / photo-bio generators or
+              run wind/solar power directly.
             </div>
           )}
 

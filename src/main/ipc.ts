@@ -1625,22 +1625,26 @@ export function registerIpc(): void {
       }
 
       // Active schematic count drives the dichotomy: personal-verdict path
-      // vs SB-flag fallback path.
+      // vs SB-flag fallback path. Power-reserves mode bypasses both — it scores
+      // by PE stat (Potential Energy) directly off the resource row.
       const activeCount = db
         .select()
         .from(activeSchematics)
         .where(eq(activeSchematics.characterId, input.characterId))
         .all().length;
-      const useFallback = activeCount === 0;
+      const noActiveSchematics = activeCount === 0;
+      const powerMode = input.buildPowerReserves;
 
-      // Build resourceId → score map for the candidate generator. Two paths:
-      //   1. activeCount > 0: use verdict.score directly (already
-      //      profession-weighted via the active schematic list).
-      //   2. activeCount === 0 OR includeSbLane: max(SB score over the
-      //      character's primary/secondary professions, weighted by tier).
+      // Build resourceId → score map for the candidate generator. Three paths:
+      //   1. powerMode: PE/10 (normalized 0..100). Bypasses verdict + SB.
+      //   2. activeCount > 0 + not powerMode: verdict.score, optional SB blend.
+      //   3. activeCount === 0 + not powerMode: SB-flag fallback.
       const scoreFor = new Map<string, number>();
 
-      if (!useFallback) {
+      if (powerMode) {
+        // PE-only path filled in during candidate iteration below — we need
+        // the resource row to read .pe, which we don't have here yet.
+      } else if (!noActiveSchematics) {
         const verdictRows = db
           .select()
           .from(verdicts)
@@ -1656,8 +1660,9 @@ export function registerIpc(): void {
         }
       }
 
-      // Either as primary path (fallback) or as blend (includeSbLane), pull SB flags.
-      if (useFallback || input.includeSbLane) {
+      // Pull SB flags as primary (fallback) or blend (includeSbLane). Skipped
+      // entirely in powerMode.
+      if (!powerMode && (noActiveSchematics || input.includeSbLane)) {
         const allFlags = db
           .select()
           .from(sbFlags)
@@ -1725,8 +1730,16 @@ export function registerIpc(): void {
         const bucket = resourceBucket(ancestors);
         if (!bucket) continue;
 
-        const score = scoreFor.get(r.id) ?? 0;
-        if (score <= 0) continue;
+        // Power-mode: score by PE/10. Resources without a PE stat (e.g. some
+        // pure minerals) are filtered out. Normal mode: read from scoreFor map.
+        let score: number;
+        if (powerMode) {
+          if (r.pe === null || r.pe <= 0) continue;
+          score = r.pe / 10;
+        } else {
+          score = scoreFor.get(r.id) ?? 0;
+          if (score <= 0) continue;
+        }
 
         const harvester = harvesterFor("heavy", bucket);
         if (!harvester) continue;
@@ -1778,7 +1791,11 @@ export function registerIpc(): void {
       return {
         recommendations,
         summary: result.summary,
-        fallbackMode: useFallback ? "no-active-schematics" : undefined,
+        fallbackMode: powerMode
+          ? "power-reserves"
+          : noActiveSchematics
+            ? "no-active-schematics"
+            : undefined,
         characterProfessions: { primary: primaryProfs, secondary: secondaryProfs },
       };
     },

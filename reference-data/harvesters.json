@@ -1,7 +1,7 @@
 {
   "provenance": {
-    "source": "swgemu-community-baseline",
-    "note": "Base Extraction Rate (BER) and hopper-size values are community-stable across SWGEmu Core3 forks. SR2's harvester Lua scripts (~/workspace/srswgemu2/MMOCoreORB/bin/scripts/object/installation/mining_ore/, mining_organic/, generators/) match vanilla on lotSize/baseMaintenanceRate/basePowerRate; BER and hopperSize live on the shared template IFF (binary) and were not overridden. If SR2 customises these via TRE later, update this file.",
+    "source": "sr2-deed-lua",
+    "note": "Values are the experimentalMax from the SR2 deed Lua scripts (max-roll a well-experimented harvester achieves). Mining harvesters (ore/gas/liquid/moisture/flora) all use the same Core3 baseline ranges: BER 1-5 / 2-6 / 3-7 for personal/medium/heavy, hopper caps 50k/75k/150k. Energy generators (solar/wind/fusion/photo-bio) have a single fixed size in SR2 — no personal/medium/heavy split; we model them all as one heavy entry per type, picking solar as the default 'energy harvester' because it has the highest BER (15) and consumes no fuel. ALL harvesters cost 1 lot on Core3/SR2 (the pre-CU SWG live 1/2/3 cost model was collapsed during the rewrite). Verified 2026-05-11 against ~/workspace/srswgemu2/MMOCoreORB/bin/scripts/object/tangible/deed/harvester_deed/*.lua and generator_deed/*.lua.",
     "lastVerified": "2026-05-11"
   },
   "harvesters": [
@@ -10,8 +10,8 @@
       "label": "Personal Mineral Extractor",
       "size": "personal",
       "bucket": "mineral",
-      "ber": 8,
-      "hopper": 30000,
+      "ber": 5,
+      "hopper": 50000,
       "lots": 1,
       "installationType": 6
     },
@@ -20,38 +20,18 @@
       "label": "Personal Chemical Extractor",
       "size": "personal",
       "bucket": "chemical",
-      "ber": 8,
-      "hopper": 30000,
+      "ber": 5,
+      "hopper": 50000,
       "lots": 1,
       "installationType": 2
-    },
-    {
-      "id": "personal_energy_wind",
-      "label": "Personal Wind Power Generator",
-      "size": "personal",
-      "bucket": "energy",
-      "ber": 6,
-      "hopper": 30000,
-      "lots": 1,
-      "installationType": 8
-    },
-    {
-      "id": "personal_energy_solar",
-      "label": "Personal Solar Power Generator",
-      "size": "personal",
-      "bucket": "energy",
-      "ber": 6,
-      "hopper": 30000,
-      "lots": 1,
-      "installationType": 1
     },
     {
       "id": "medium_mineral",
       "label": "Mineral Mining Installation",
       "size": "medium",
       "bucket": "mineral",
-      "ber": 12,
-      "hopper": 45000,
+      "ber": 6,
+      "hopper": 75000,
       "lots": 1,
       "installationType": 6
     },
@@ -60,38 +40,18 @@
       "label": "Chemical Extractor",
       "size": "medium",
       "bucket": "chemical",
-      "ber": 12,
-      "hopper": 45000,
+      "ber": 6,
+      "hopper": 75000,
       "lots": 1,
       "installationType": 2
-    },
-    {
-      "id": "medium_energy_wind",
-      "label": "Wind Power Generator",
-      "size": "medium",
-      "bucket": "energy",
-      "ber": 8,
-      "hopper": 45000,
-      "lots": 1,
-      "installationType": 8
-    },
-    {
-      "id": "medium_energy_solar",
-      "label": "Solar Power Generator",
-      "size": "medium",
-      "bucket": "energy",
-      "ber": 8,
-      "hopper": 45000,
-      "lots": 1,
-      "installationType": 1
     },
     {
       "id": "heavy_mineral",
       "label": "Heavy Mineral Mining Installation",
       "size": "heavy",
       "bucket": "mineral",
-      "ber": 16,
-      "hopper": 60000,
+      "ber": 7,
+      "hopper": 150000,
       "lots": 1,
       "installationType": 6
     },
@@ -100,30 +60,32 @@
       "label": "Heavy Chemical Extractor",
       "size": "heavy",
       "bucket": "chemical",
-      "ber": 16,
-      "hopper": 60000,
+      "ber": 7,
+      "hopper": 150000,
       "lots": 1,
       "installationType": 2
     },
     {
-      "id": "heavy_energy_wind",
-      "label": "Heavy Wind Power Generator",
+      "id": "energy_solar",
+      "label": "Solar Power Generator",
       "size": "heavy",
       "bucket": "energy",
-      "ber": 11,
-      "hopper": 60000,
+      "ber": 15,
+      "hopper": 75000,
       "lots": 1,
-      "installationType": 8
+      "installationType": 1,
+      "note": "SR2 has no size variants for energy generators. Solar = highest-BER energy harvester (15) with no fuel requirement."
     },
     {
-      "id": "heavy_energy_solar",
-      "label": "Heavy Solar Power Generator",
+      "id": "energy_wind",
+      "label": "Wind Power Generator",
       "size": "heavy",
       "bucket": "energy",
-      "ber": 11,
-      "hopper": 60000,
+      "ber": 10,
+      "hopper": 50000,
       "lots": 1,
-      "installationType": 1
+      "installationType": 8,
+      "note": "Alternate to solar — pick whichever has better resource availability on the target planet."
     }
   ]
 }
