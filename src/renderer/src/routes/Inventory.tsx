@@ -315,6 +315,301 @@ function AddResourcePanel({
   );
 }
 
+// Bulk-paste import from GH. Designed for first-time setup ("I've been
+// crafting on SR2 for 2 years, here's my inventory list") or large stash
+// imports. Sequential lookup-and-add — same per-call IPCs as single-add,
+// just looped renderer-side with progress and a final summary.
+//
+// Input format: one resource per line, optionally `name <units>`. Blank
+// lines and lines starting with # are ignored.
+//
+// Per-item flow:
+//   1. lookupGhResource(name) — short-circuits if locally known, hits GH
+//      otherwise.
+//   2. If found and not already in this character's inventory, upsert
+//      inventory with parsed units, status defaulted per GH availability
+//      (despawned if GH marks unavailable, defaultStatus otherwise).
+//   3. Track outcome bucket: imported / skipped-already-owned / not-found
+//      / error.
+//
+// No new IPC plumbing — the loop is renderer-side over existing handlers.
+function BulkImportPanel({
+  characterId,
+  galaxyId,
+  existingIds,
+  onAdded,
+}: {
+  characterId: string;
+  galaxyId: number;
+  existingIds: Set<string>;
+  onAdded: () => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [defaultUnits, setDefaultUnits] = useState("0");
+  const [defaultStatus, setDefaultStatus] = useState<InventoryStatus>("despawned");
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(
+    null,
+  );
+  const [summary, setSummary] = useState<{
+    imported: number;
+    skipped: string[];
+    notFound: string[];
+    errors: Array<{ name: string; message: string }>;
+  } | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
+
+  interface ParsedItem {
+    name: string;
+    units: number;
+  }
+
+  function parseLines(): ParsedItem[] {
+    setParseError(null);
+    const fallbackUnits = Number.parseInt(defaultUnits, 10);
+    const fallback = Number.isFinite(fallbackUnits) && fallbackUnits >= 0 ? fallbackUnits : 0;
+    const items: ParsedItem[] = [];
+    const seen = new Set<string>();
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (line.length === 0 || line.startsWith("#")) continue;
+      const parts = line.split(/\s+/);
+      const name = parts[0];
+      if (seen.has(name)) continue; // dedupe — first occurrence wins
+      seen.add(name);
+      let units = fallback;
+      if (parts.length > 1) {
+        const n = Number.parseInt(parts[1], 10);
+        if (Number.isFinite(n) && n >= 0) units = n;
+      }
+      items.push({ name, units });
+    }
+    return items;
+  }
+
+  async function run(): Promise<void> {
+    const items = parseLines();
+    if (items.length === 0) {
+      setParseError("No valid names parsed. One resource per line.");
+      return;
+    }
+    setRunning(true);
+    setSummary(null);
+    let imported = 0;
+    const skipped: string[] = [];
+    const notFound: string[] = [];
+    const errors: Array<{ name: string; message: string }> = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const { name, units } = items[i];
+      setProgress({ done: i, total: items.length, current: name });
+      if (existingIds.has(name)) {
+        skipped.push(name);
+        continue;
+      }
+      try {
+        const result = await window.api.lookupGhResource({ name, galaxyId });
+        if (!result.found || !result.resource) {
+          notFound.push(name);
+          continue;
+        }
+        const status: InventoryStatus =
+          result.unavailableAt !== null ? "despawned" : defaultStatus;
+        await window.api.upsertInventory({
+          characterId,
+          resourceId: result.resource.id,
+          units,
+          status,
+        });
+        imported++;
+      } catch (e) {
+        errors.push({ name, message: String(e) });
+      }
+    }
+
+    setProgress({ done: items.length, total: items.length, current: "" });
+    setSummary({ imported, skipped, notFound, errors });
+    setRunning(false);
+    if (imported > 0) onAdded();
+  }
+
+  return (
+    <div className="rounded-md border border-slate-700 bg-slate-900 p-4 mb-6">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full text-left text-sm font-medium text-slate-300 flex items-center justify-between"
+      >
+        <span>
+          Bulk import from GalaxyHarvester
+          <span className="ml-2 text-xs text-slate-500 font-normal">
+            (paste a list — pulls each from GH and adds to your crates)
+          </span>
+        </span>
+        <span className="text-slate-500 text-xs">{open ? "▼ collapse" : "▸ expand"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-4">
+          <p className="text-xs text-slate-400 mb-2">
+            One resource per line. Optional units after a space:{" "}
+            <code className="text-slate-300">aakuran 5000</code>. Blank lines and{" "}
+            <code className="text-slate-300">#</code> comments are ignored. Resources already in
+            your crates are skipped. Status auto-defaults to{" "}
+            <span className="text-slate-300">despawned</span> for resources GH marks unavailable.
+          </p>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={running}
+            rows={8}
+            placeholder={`# paste names, one per line, optional units\naakuran 5000\nbocofiiam 20000\nneatoic`}
+            className="w-full px-3 py-2 rounded-md bg-slate-800 border border-slate-700 text-slate-100 placeholder:text-slate-700 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-cyan-600 focus:border-cyan-600 disabled:opacity-50"
+          />
+
+          <div className="flex items-end gap-3 mt-3">
+            <div>
+              <label htmlFor="bulk-units" className="block text-xs text-slate-400 mb-1">
+                Default units
+              </label>
+              <input
+                id="bulk-units"
+                type="number"
+                min={0}
+                step={1}
+                value={defaultUnits}
+                onChange={(e) => setDefaultUnits(e.target.value)}
+                disabled={running}
+                className="w-28 px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-100 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-cyan-600"
+              />
+            </div>
+            <div>
+              <label htmlFor="bulk-status" className="block text-xs text-slate-400 mb-1">
+                Default status (for spawning resources)
+              </label>
+              <select
+                id="bulk-status"
+                value={defaultStatus}
+                onChange={(e) => setDefaultStatus(e.target.value as InventoryStatus)}
+                disabled={running}
+                className="px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-100 text-xs"
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={run}
+              disabled={running || text.trim().length === 0}
+              className="ml-auto px-4 py-1.5 rounded-md bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium"
+            >
+              {running ? "Importing…" : "Import"}
+            </button>
+          </div>
+
+          {parseError && <div className="text-xs text-red-300 mt-2">{parseError}</div>}
+
+          {progress && (
+            <div className="mt-3 text-xs text-slate-400">
+              <div className="flex items-baseline justify-between mb-1">
+                <span>
+                  {progress.done < progress.total ? (
+                    <>
+                      Importing <span className="text-slate-200">{progress.done}</span> of{" "}
+                      {progress.total}{" "}
+                      {progress.current && (
+                        <span className="text-slate-500">— {progress.current}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-emerald-300">
+                      Complete · {progress.done} processed
+                    </span>
+                  )}
+                </span>
+                <span className="tabular-nums text-slate-500">
+                  {Math.round((progress.done / progress.total) * 100)}%
+                </span>
+              </div>
+              <div className="h-1 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-cyan-500 transition-all"
+                  style={{ width: `${(progress.done / progress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {summary && (
+            <div className="mt-4 p-3 rounded-md border border-cyan-800 bg-cyan-950/30 text-xs">
+              <div className="text-slate-200 font-medium mb-2">Import summary</div>
+              <ul className="space-y-1 text-slate-300">
+                <li>
+                  <span className="text-emerald-300 font-semibold tabular-nums">
+                    {summary.imported}
+                  </span>{" "}
+                  added to crates
+                </li>
+                {summary.skipped.length > 0 && (
+                  <li>
+                    <span className="text-amber-300 font-semibold tabular-nums">
+                      {summary.skipped.length}
+                    </span>{" "}
+                    skipped (already in crates):{" "}
+                    <span className="text-slate-500 font-mono">
+                      {summary.skipped.slice(0, 8).join(", ")}
+                      {summary.skipped.length > 8 && ` … +${summary.skipped.length - 8} more`}
+                    </span>
+                  </li>
+                )}
+                {summary.notFound.length > 0 && (
+                  <li>
+                    <span className="text-red-300 font-semibold tabular-nums">
+                      {summary.notFound.length}
+                    </span>{" "}
+                    not found on GH:{" "}
+                    <span className="text-slate-500 font-mono">
+                      {summary.notFound.slice(0, 8).join(", ")}
+                      {summary.notFound.length > 8 && ` … +${summary.notFound.length - 8} more`}
+                    </span>
+                  </li>
+                )}
+                {summary.errors.length > 0 && (
+                  <li>
+                    <span className="text-red-300 font-semibold tabular-nums">
+                      {summary.errors.length}
+                    </span>{" "}
+                    errored:{" "}
+                    <span className="text-slate-500 font-mono">
+                      {summary.errors.slice(0, 4).map((e) => e.name).join(", ")}
+                    </span>
+                  </li>
+                )}
+              </ul>
+              <button
+                type="button"
+                onClick={() => {
+                  setText("");
+                  setSummary(null);
+                  setProgress(null);
+                }}
+                className="mt-3 text-xs text-slate-400 hover:text-slate-200"
+              >
+                Clear and import another batch
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Per-row inline editor. Tracks dirty state vs the loaded entry so Save
 // is gated on actual changes.
 function InventoryRow({
@@ -534,6 +829,13 @@ export function Inventory(): JSX.Element {
         snapshotResources={snapshotResources}
         onAdded={load}
         existingIds={existingIds}
+      />
+
+      <BulkImportPanel
+        characterId={character.id}
+        galaxyId={character.galaxyId}
+        existingIds={existingIds}
+        onAdded={load}
       />
 
       {loading && <p className="text-slate-400">Loading…</p>}
