@@ -389,6 +389,10 @@ export interface IpcApi {
   createCharacter(input: CreateCharacterInput): Promise<Character>;
   setActiveCharacter(id: string): Promise<void>;
   getProfessionPriorities(characterId: string): Promise<ProfessionPriority[]>;
+  setProfessionPriorities(
+    characterId: string,
+    priorities: ProfessionPriority[],
+  ): Promise<ProfessionPriority[]>;
 
   // Phase 2 — schematics
   listSchematics(filter?: SchematicListFilter): Promise<SchematicSummary[]>;

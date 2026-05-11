@@ -70,51 +70,12 @@ export function Character(): JSX.Element {
   }
 
   if (character && stored) {
-    // Existing character view
-    const grouped: Record<ProfessionTier, ProfessionPriority[]> = {
-      primary: [],
-      secondary: [],
-      ignored: [],
-    };
-    for (const p of stored) grouped[p.tier as ProfessionTier].push(p);
-
     return (
-      <div className="p-6 max-w-3xl">
-        <h2 className="text-xl font-semibold text-slate-100 mb-1">{character.name}</h2>
-        <p className="text-xs text-slate-400 mb-6">
-          Galaxy {character.galaxyId} · created {new Date(character.createdAt).toLocaleDateString()}
-        </p>
-
-        <div className="space-y-4">
-          {TIER_ORDER.map((tier) => (
-            <div key={tier}>
-              <h3 className="text-sm font-medium text-slate-300 mb-2">{TIER_LABEL[tier]}</h3>
-              <div className="flex flex-wrap gap-2">
-                {grouped[tier].length === 0 ? (
-                  <span className="text-xs text-slate-600">— none —</span>
-                ) : (
-                  grouped[tier].map((p) => {
-                    const def = PROFESSIONS.find((d) => d.id === p.profession);
-                    return (
-                      <span
-                        key={p.profession}
-                        className={`px-3 py-1 rounded-md border text-sm ${TIER_CLASS[tier]}`}
-                      >
-                        {def?.name ?? p.profession}
-                      </span>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <p className="mt-8 text-xs text-slate-600">
-          Character editing isn't in Phase 2; recreate by deleting <code>%APPDATA%\galaxycrafter\galaxycrafter.sqlite</code>
-          and restarting if you need to change priorities. Multi-character + edit flows come later.
-        </p>
-      </div>
+      <ExistingCharacterView
+        character={character}
+        stored={stored}
+        onSaved={(updated) => setStored(updated)}
+      />
     );
   }
 
@@ -211,4 +172,185 @@ export function Character(): JSX.Element {
       </button>
     </div>
   );
+}
+
+interface ExistingCharacterViewProps {
+  character: { id: string; name: string; galaxyId: number; createdAt: number };
+  stored: ProfessionPriority[];
+  onSaved: (updated: ProfessionPriority[]) => void;
+}
+
+function ExistingCharacterView({
+  character,
+  stored,
+  onSaved,
+}: ExistingCharacterViewProps): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, ProfessionTier>>(() =>
+    storedToMap(stored),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function startEdit(): void {
+    setDraft(storedToMap(stored));
+    setEditing(true);
+    setError(null);
+  }
+
+  function cancelEdit(): void {
+    setEditing(false);
+    setError(null);
+  }
+
+  function setTier(profession: string, tier: ProfessionTier): void {
+    setDraft((prev) => ({ ...prev, [profession]: tier }));
+  }
+
+  async function save(): Promise<void> {
+    setError(null);
+    setSaving(true);
+    try {
+      const priorityList: ProfessionPriority[] = PROFESSIONS.map((p, idx) => ({
+        profession: p.id,
+        tier: draft[p.id] ?? "ignored",
+        rank: idx,
+      }));
+      const updated = await window.api.setProfessionPriorities(character.id, priorityList);
+      onSaved(updated);
+      setEditing(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="p-6 max-w-3xl">
+        <h2 className="text-xl font-semibold text-slate-100 mb-1">{character.name}</h2>
+        <p className="text-xs text-slate-400 mb-6">
+          Edit profession priorities. Saving recomputes verdicts immediately.
+        </p>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-md border border-red-900 bg-red-950 text-red-200 text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-2 mb-6">
+          {PROFESSIONS.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center justify-between gap-4 px-3 py-2 rounded-md border border-slate-700 bg-slate-900"
+            >
+              <div className="flex-1">
+                <div className="text-sm text-slate-200">{p.name}</div>
+                {p.description && (
+                  <div className="text-xs text-slate-400">{p.description}</div>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                {TIER_ORDER.map((tier) => (
+                  <button
+                    key={tier}
+                    type="button"
+                    onClick={() => setTier(p.id, tier)}
+                    className={`px-3 py-1 rounded-md border text-xs transition-colors ${
+                      draft[p.id] === tier
+                        ? TIER_CLASS[tier]
+                        : "border-slate-700 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    {TIER_LABEL[tier]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className="px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={cancelEdit}
+            disabled={saving}
+            className="px-4 py-2 rounded-md border border-slate-700 text-slate-300 hover:border-slate-600 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const grouped: Record<ProfessionTier, ProfessionPriority[]> = {
+    primary: [],
+    secondary: [],
+    ignored: [],
+  };
+  for (const p of stored) grouped[p.tier as ProfessionTier].push(p);
+
+  return (
+    <div className="p-6 max-w-3xl">
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-100 mb-1">{character.name}</h2>
+          <p className="text-xs text-slate-400">
+            Galaxy {character.galaxyId} · created{" "}
+            {new Date(character.createdAt).toLocaleDateString()}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={startEdit}
+          className="px-3 py-1.5 rounded-md border border-slate-700 text-slate-300 hover:border-emerald-700 hover:text-emerald-300 text-sm"
+        >
+          Edit professions
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        {TIER_ORDER.map((tier) => (
+          <div key={tier}>
+            <h3 className="text-sm font-medium text-slate-300 mb-2">{TIER_LABEL[tier]}</h3>
+            <div className="flex flex-wrap gap-2">
+              {grouped[tier].length === 0 ? (
+                <span className="text-xs text-slate-600">— none —</span>
+              ) : (
+                grouped[tier].map((p) => {
+                  const def = PROFESSIONS.find((d) => d.id === p.profession);
+                  return (
+                    <span
+                      key={p.profession}
+                      className={`px-3 py-1 rounded-md border text-sm ${TIER_CLASS[tier]}`}
+                    >
+                      {def?.name ?? p.profession}
+                    </span>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function storedToMap(stored: ProfessionPriority[]): Record<string, ProfessionTier> {
+  const map: Record<string, ProfessionTier> = {};
+  for (const p of PROFESSIONS) map[p.id] = "ignored";
+  for (const p of stored) map[p.profession] = p.tier as ProfessionTier;
+  return map;
 }

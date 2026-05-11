@@ -14,6 +14,8 @@ const api: IpcApi = {
   setActiveCharacter: (id) => ipcRenderer.invoke("characters:setActive", id),
   getProfessionPriorities: (characterId) =>
     ipcRenderer.invoke("characters:priorities", characterId),
+  setProfessionPriorities: (characterId, priorities) =>
+    ipcRenderer.invoke("characters:setPriorities", characterId, priorities),
 
   // Phase 2 — schematics
   listSchematics: (filter) => ipcRenderer.invoke("schematics:list", filter),

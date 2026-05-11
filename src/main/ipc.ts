@@ -315,6 +315,42 @@ export function registerIpc(): void {
     },
   );
 
+  ipcMain.handle(
+    "characters:setPriorities",
+    async (
+      _evt,
+      characterId: string,
+      priorities: ProfessionPriority[],
+    ): Promise<ProfessionPriority[]> => {
+      const db = getDb();
+      const exists = db.select().from(characters).where(eq(characters.id, characterId)).get();
+      if (!exists) throw new Error(`Character not found: ${characterId}`);
+
+      db.transaction((tx) => {
+        tx.delete(professionPriorities)
+          .where(eq(professionPriorities.characterId, characterId))
+          .run();
+        for (const p of priorities) {
+          tx.insert(professionPriorities)
+            .values({
+              characterId,
+              profession: p.profession,
+              tier: p.tier,
+              rank: p.rank,
+            })
+            .run();
+        }
+      });
+
+      // Verdicts depend on profession tiers (primary/secondary/ignored).
+      // SB flags are orthogonal to per-character priorities (computed once
+      // per snapshot across all 8 professions), so they don't need a recompute here.
+      recomputeForCharacter(characterId);
+
+      return priorities;
+    },
+  );
+
   // === Phase 2: schematics ===
 
   ipcMain.handle(
