@@ -740,6 +740,34 @@ export function registerIpc(): void {
         }
       }
 
+      // Inventory entry for this resource on the active character, if any.
+      let inventory: InventoryEntry | null = null;
+      if (activeCharId) {
+        const invRow = db
+          .select()
+          .from(inventoryEntries)
+          .where(
+            and(
+              eq(inventoryEntries.characterId, activeCharId),
+              eq(inventoryEntries.resourceId, r.id),
+            ),
+          )
+          .get();
+        if (invRow) {
+          inventory = {
+            characterId: invRow.characterId,
+            resourceId: invRow.resourceId,
+            resourceName: r.name,
+            typeDisplayName: r.typeDisplayName,
+            units: invRow.units,
+            status: invRow.status as InventoryStatus,
+            notes: invRow.notes,
+            addedAt: invRow.addedAt,
+            updatedAt: invRow.updatedAt,
+          };
+        }
+      }
+
       return {
         id: r.id,
         name: r.name,
@@ -772,6 +800,7 @@ export function registerIpc(): void {
           : { OQ: 0, CR: 0, CD: 0, DR: 0, FL: 0, HR: 0, MA: 0, PE: 0, SR: 0, UT: 0, ER: 0 },
         verdict: verdictView,
         fitsActiveSchematics,
+        inventory,
       };
     },
   );

@@ -257,6 +257,11 @@ export interface ResourceDetail {
     inheritedFromParent: boolean;
     matchingSlots: string[];
   }>;
+
+  // The active character's inventory entry for this resource, if any.
+  // Phase 4D surfaces this on the detail page as a dedicated section so
+  // owned resources clearly show "you have X units, status, notes."
+  inventory: InventoryEntry | null;
 }
 
 export interface SchematicListFilter {

@@ -190,6 +190,45 @@ export function ResourceDetail(): JSX.Element {
         <StatPanel stats={detail.stats} caps={detail.caps} floors={detail.floors} />
       </section>
 
+      {detail.inventory && (
+        <section className="mb-8">
+          <h3 className="text-sm font-medium text-slate-300 mb-2">In your Crates</h3>
+          <div className="rounded-md border border-cyan-800 bg-cyan-950/30 px-4 py-3 text-sm">
+            <div className="flex items-baseline gap-4">
+              <span className="text-cyan-200 text-2xl font-semibold tabular-nums">
+                {detail.inventory.units.toLocaleString()}
+              </span>
+              <span className="text-cyan-300/80 text-xs">units</span>
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium ${
+                  detail.inventory.status === "live"
+                    ? "bg-emerald-900/40 border-emerald-700 text-emerald-200"
+                    : detail.inventory.status === "reserved"
+                      ? "bg-amber-900/40 border-amber-700 text-amber-200"
+                      : "bg-slate-800 border-slate-700 text-slate-300"
+                }`}
+              >
+                {detail.inventory.status}
+              </span>
+              <span
+                className="text-xs text-slate-500 ml-auto"
+                title={new Date(detail.inventory.updatedAt).toLocaleString()}
+              >
+                updated {relativeAge(detail.inventory.updatedAt)}
+              </span>
+            </div>
+            {detail.inventory.notes && (
+              <div className="mt-2 text-xs text-slate-300">{detail.inventory.notes}</div>
+            )}
+            <div className="mt-2 text-[11px] text-cyan-400/80">
+              <Link to="/inventory" className="hover:text-cyan-200">
+                Edit in Crates →
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
       {detail.verdict && detail.verdict.breakdown.length > 0 && (
         <section className="mb-8">
           <h3 className="text-sm font-medium text-slate-300 mb-2">
@@ -207,44 +246,86 @@ export function ResourceDetail(): JSX.Element {
                   <th className="px-3 py-2 text-left font-medium">Property</th>
                   <th className="px-3 py-2 text-left font-medium">Group</th>
                   <th className="px-3 py-2 text-right font-medium">Score</th>
+                  <th className="px-3 py-2 text-right font-medium">Owned</th>
+                  <th className="px-3 py-2 text-right font-medium">Δ</th>
+                  <th className="px-3 py-2 text-center font-medium">Tier</th>
                 </tr>
               </thead>
               <tbody>
-                {detail.verdict.breakdown.map((m) => (
-                  <tr
-                    key={`${m.schematicId}-${m.propertyGroupId}`}
-                    className="border-t border-slate-700 hover:bg-slate-800/50"
-                  >
-                    <td className="px-3 py-2">
-                      <Link
-                        to={`/schematics/${m.schematicId}`}
-                        className="text-emerald-400 hover:text-emerald-300"
-                      >
-                        {m.schematicName}
-                      </Link>
-                      {m.inheritedFromParent && (
-                        <span className="ml-2 text-[10px] text-slate-600 uppercase tracking-wide">
-                          sub-component
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-slate-200">{m.propertyName ?? "—"}</td>
-                    <td className="px-3 py-2 text-slate-400 text-xs font-mono">
-                      {m.expGroup ?? "—"}
-                    </td>
-                    <td
-                      className={`px-3 py-2 text-right tabular-nums ${
-                        m.score >= 85
-                          ? "text-emerald-400 font-semibold"
-                          : m.score >= 65
-                            ? "text-amber-300"
-                            : "text-slate-400"
-                      }`}
+                {detail.verdict.breakdown.map((m) => {
+                  // Pre-Phase-4 persisted breakdowns may lack scoreOwned/tier;
+                  // treat undefined as 0 / "SKIP" for graceful rendering until
+                  // the next recompute writes the new shape.
+                  const scoreOwned = m.scoreOwned ?? 0;
+                  const delta = scoreOwned > 0 ? m.score - scoreOwned : null;
+                  const tier = m.tier ?? "SKIP";
+                  const tierCls =
+                    tier === "CHASE"
+                      ? "bg-emerald-900/60 border-emerald-700 text-emerald-200"
+                      : tier === "MAYBE"
+                        ? "bg-amber-900/50 border-amber-700 text-amber-200"
+                        : "bg-slate-800 border-slate-700 text-slate-400";
+                  return (
+                    <tr
+                      key={`${m.schematicId}-${m.propertyGroupId}`}
+                      className="border-t border-slate-700 hover:bg-slate-800/50"
                     >
-                      {m.score.toFixed(1)}
-                    </td>
-                  </tr>
-                ))}
+                      <td className="px-3 py-2">
+                        <Link
+                          to={`/schematics/${m.schematicId}`}
+                          className="text-emerald-400 hover:text-emerald-300"
+                        >
+                          {m.schematicName}
+                        </Link>
+                        {m.inheritedFromParent && (
+                          <span className="ml-2 text-[10px] text-slate-600 uppercase tracking-wide">
+                            sub-component
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-slate-200">{m.propertyName ?? "—"}</td>
+                      <td className="px-3 py-2 text-slate-400 text-xs font-mono">
+                        {m.expGroup ?? "—"}
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right tabular-nums ${
+                          m.score >= 85
+                            ? "text-emerald-400 font-semibold"
+                            : m.score >= 65
+                              ? "text-amber-300"
+                              : "text-slate-400"
+                        }`}
+                      >
+                        {m.score.toFixed(1)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-400">
+                        {scoreOwned > 0 ? scoreOwned.toFixed(1) : <span className="text-slate-700">—</span>}
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right tabular-nums ${
+                          delta === null
+                            ? "text-slate-700"
+                            : delta >= 3
+                              ? "text-emerald-400"
+                              : delta >= 0
+                                ? "text-slate-400"
+                                : "text-red-400"
+                        }`}
+                      >
+                        {delta === null
+                          ? "—"
+                          : `${delta >= 0 ? "+" : ""}${delta.toFixed(1)}`}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <span
+                          className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium ${tierCls}`}
+                        >
+                          {tier}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
