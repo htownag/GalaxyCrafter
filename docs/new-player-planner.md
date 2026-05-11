@@ -56,12 +56,13 @@ For each (resource, planet) pair currently spawning that fits one of the three b
 ```
 deploymentValue(resource, planet, size) =
     resourceScore(resource)              // 0..100, from verdict engine
-    × concentration(resource, planet) / 100   // 0..1, GH-reported
-    × ber(size, resource.bucket)               // 6..16 per table above
+    × ber(size, resource.bucket)               // 5..15 per table above
     × hoursPerDay                              // = 24
 ```
 
-Reads as **expected score-weighted units of useful resource per day on that lot**. Then the optimization target is `sum(deploymentValue)` across the chosen lots, subject to lot count + (optional) credit budget.
+**Concentration is intentionally absent.** GH's bulk `current<id>.xml` feed (our ingest source) does not publish per-planet concentration — only the resource's planet list. Concentration data lives in GH's separate waypoint-report endpoint, which we don't currently ingest. The planner reports a ceiling daily yield (`BER × 24`) and the player calibrates downward based on their own survey readings. Adding real concentration is a Phase 7.5 feature.
+
+Then the optimization target is `sum(deploymentValue)` across the chosen lots, subject to lot count.
 
 **resourceScore is profession-weighted:** the planner uses the existing verdict engine's `score` field. If a resource is `SKIP` for the player's profession, `resourceScore = 0` and it won't be picked. If it's `TOP_CHASE` for the primary profession, it's the highest scorer.
 
@@ -73,7 +74,7 @@ Reads as **expected score-weighted units of useful resource per day on that lot*
 candidates = all (resource, planet, size, bucket) tuples spawning right now
             where resource fits the bucket's resource group
             AND resource.score (verdict.score) > 0
-            AND concentration(resource, planet) > 50  (hard floor, confirmed)
+            (no concentration filter — see §3)
 
 sorted = candidates sorted desc by deploymentValue
 
@@ -189,7 +190,7 @@ Loaded at startup like `schematics.json` and `resource-types.json`. SR2's publis
 
 ## 8. Open questions — RESOLVED 2026-05-11
 
-- **Concentration floor → 50.** Hard floor at `concentration > 50`. Locked.
+- **Concentration → dropped from v1 entirely.** Originally specced with a `conc > 50` floor and `× conc/100` weighting in the scoring formula. Then I caught (and Ryan confirmed) that GH's bulk feed doesn't ship per-planet concentration at all — the `resource_planets` table just stores `(resource_id, planet)` pairs. Pulling concentration would require ingesting GH's waypoint-report endpoint, which is Phase 7.5+ work. v1 ships without it: est-daily-yield is the ceiling (`BER × 24`), player mentally discounts for their own surveyed conc.
 - **Energy bucket → one bucket.** Wind + solar collapsed. Locked.
 - **Resource-shift awareness → punt.** No despawn signal in v1.
 - **Maintenance / power → skip.** No credit modeling at all in v1 (servers vary too much; no reliable source for SR2's current numbers).

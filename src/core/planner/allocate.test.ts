@@ -6,7 +6,6 @@ function cand(opts: Partial<Candidate> & { id: string; dv: number }): Candidate 
     resourceId: opts.id,
     resourceName: opts.id,
     planet: opts.planet ?? "tatooine",
-    concentrationPct: opts.concentrationPct ?? 80,
     resourceScore: opts.resourceScore ?? 90,
     bucket: opts.bucket ?? "mineral",
     size: opts.size ?? "heavy",
@@ -14,7 +13,7 @@ function cand(opts: Partial<Candidate> & { id: string; dv: number }): Candidate 
     harvesterId: opts.harvesterId ?? "heavy_mineral",
     harvesterLabel: opts.harvesterLabel ?? "Heavy Mineral",
     deploymentValue: opts.dv,
-    estDailyYield: opts.estDailyYield ?? 12000,
+    estDailyYield: opts.estDailyYield ?? 168,
   };
 }
 

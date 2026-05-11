@@ -1716,13 +1716,20 @@ export function registerIpc(): void {
       // monotonic) so emitting all three sizes would only add candidates that
       // never get picked. Player picks the actual size in-game; we recommend
       // the optimal one.
-      const CONCENTRATION_FLOOR = 50;
+      //
+      // Concentration was originally part of the candidate gen + scoring, but
+      // GH's bulk current<id>.xml feed does NOT publish per-planet
+      // concentration — only the resource's planet list. Concentration data
+      // requires user-submitted waypoint reports which we don't ingest. v1
+      // drops the dimension entirely; est-daily-yield is computed as
+      // BER × 24 (ceiling — what the harvester yields when sited on a
+      // 100% concentration node). Player calibrates downward in their head
+      // based on actual surveyed conc.
       const planetBias =
         input.planetBias && input.planetBias !== "any" ? input.planetBias : null;
 
       const candidates: PlannerCandidate[] = [];
       for (const p of planetRows) {
-        if (p.concentration <= CONCENTRATION_FLOOR) continue;
         if (planetBias && p.planet !== planetBias) continue;
         const r = resourceById.get(p.resourceId);
         if (!r) continue;
@@ -1768,26 +1775,25 @@ export function registerIpc(): void {
           }
           if (!harvester) continue;
 
-          // Daily yield in power units = max(1, PE/500) × extracted units/day.
+          // Daily yield in power units = max(1, PE/500) × 24 hours × BER.
+          // No concentration factor — see top-of-loop comment.
           const mult = powerMultiplier(pe);
-          estDailyYield = mult * (p.concentration / 100) * harvester.ber * 24;
+          estDailyYield = mult * harvester.ber * 24;
         } else {
           score = scoreFor.get(r.id) ?? 0;
           if (score <= 0) continue;
           if (!harvester) continue;
-          estDailyYield = (p.concentration / 100) * harvester.ber * 24;
+          estDailyYield = harvester.ber * 24;
         }
 
-        // Sort key. Normal mode: deploymentValue (score × conc × BER × 24).
-        // Power mode: estDailyYield directly — i.e. actual power units per
-        // day per lot. Uses the SAME max(1, PE/500) multiplier as the game,
-        // so PE > 500 is non-linearly favoured (PE 1000 = 2× PE 500's yield
-        // at equivalent conc + BER), and PE ≤ 500 floors at 1×.
+        // Sort key. Normal mode: score × BER × 24 (deploymentValue with
+        // concentration forced to 100). Power mode: estDailyYield directly,
+        // which already factors in max(1, PE/500) × BER × 24.
         const dv = powerMode
           ? estDailyYield
           : deploymentValue({
               resourceScore: score,
-              concentrationPct: p.concentration,
+              concentrationPct: 100,
               ber: harvester.ber,
             });
 
@@ -1795,7 +1801,6 @@ export function registerIpc(): void {
           resourceId: r.id,
           resourceName: r.name,
           planet: p.planet,
-          concentrationPct: p.concentration,
           resourceScore: score,
           bucket,
           size: harvester.size,
@@ -1821,7 +1826,6 @@ export function registerIpc(): void {
         size: c.size,
         harvesterLabel: c.harvesterLabel,
         planet: c.planet,
-        concentrationPct: c.concentrationPct,
         resourceScore: c.resourceScore,
         deploymentValue: c.deploymentValue,
         estDailyYield: c.estDailyYield,

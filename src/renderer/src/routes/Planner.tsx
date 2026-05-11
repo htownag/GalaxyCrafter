@@ -252,9 +252,8 @@ export function Planner(): JSX.Element {
                     <th className="px-2 py-2 text-left font-medium">Resource</th>
                     <th className="px-2 py-2 text-left font-medium">Bucket</th>
                     <th className="px-2 py-2 text-left font-medium">Planet</th>
-                    <th className="px-2 py-2 text-right font-medium">Conc.</th>
                     <th className="px-2 py-2 text-right font-medium">Score</th>
-                    <th className="px-2 py-2 text-right font-medium">Est. daily</th>
+                    <th className="px-2 py-2 text-right font-medium" title="Ceiling at 100% concentration. Calibrate down based on your own survey readings.">Est. daily</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -300,9 +299,6 @@ function PlannerRow({ row }: { row: PlannerRecommendation }): JSX.Element {
         </span>
       </td>
       <td className="px-2 py-1.5 text-slate-300 capitalize">{row.planet}</td>
-      <td className="px-2 py-1.5 text-right text-slate-300 tabular-nums">
-        {row.concentrationPct}%
-      </td>
       <td className="px-2 py-1.5 text-right text-slate-100 tabular-nums">
         {Math.round(row.resourceScore)}
       </td>

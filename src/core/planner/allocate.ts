@@ -11,7 +11,6 @@ export interface Candidate {
   resourceId: string;
   resourceName: string;
   planet: string;
-  concentrationPct: number;
   resourceScore: number; // 0..100 in normal mode; raw PE 0..1000 in power mode
   bucket: HarvesterBucket;
   size: HarvesterSize;
@@ -22,7 +21,11 @@ export interface Candidate {
   harvesterId: string;
   harvesterLabel: string;
   deploymentValue: number; // pre-computed via score.ts
-  estDailyYield: number; // power units/day in power mode; raw units/day otherwise
+  /** Ceiling yield assuming 100% concentration: BER × 24, or
+   * max(1, PE/500) × BER × 24 in power mode. GH's bulk feed doesn't ship
+   * per-planet concentration so we can't compute realistic yields per site;
+   * player calibrates downward based on their own survey readings. */
+  estDailyYield: number;
 }
 
 export interface AllocateInput {

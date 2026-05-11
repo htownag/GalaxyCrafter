@@ -294,9 +294,11 @@ export interface PlannerRecommendation {
   size: HarvesterSize;
   harvesterLabel: string;
   planet: string;
-  concentrationPct: number;
   resourceScore: number;
   deploymentValue: number;
+  /** Ceiling daily yield (BER × 24, or PE-multiplier × BER × 24 in power mode).
+   * v1 has no concentration data so this is the 100%-conc ceiling, not a
+   * site-specific projection. */
   estDailyYield: number;
 }
 
