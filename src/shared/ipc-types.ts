@@ -273,7 +273,16 @@ export interface SimulatorSkillProfile {
 /** Per-slot resource choice. Slots not in `slotChoices` default to perfect. */
 export type SimulatorSlotChoice =
   | { type: "hypothetical_perfect" }
-  | { type: "resource"; resourceId: string };
+  | { type: "resource"; resourceId: string }
+  /**
+   * Manual stat-vector entry. Used for sub-component slots (ingredientType ≠ 0):
+   * crafted sub-components, looted exotics. User types in the values they
+   * observe on the item in-game. Stats not in the map are treated as 0.
+   * Only stats with weight > 0 in at least one of the parent's property
+   * groups are surfaced in the UI; the rest are zero-by-default and don't
+   * affect the math.
+   */
+  | { type: "manual"; stats: Partial<ResourceStats> };
 
 export interface SimulatorPredictInput {
   schematicId: string;
@@ -310,7 +319,10 @@ export interface SimulatorSlotInfo {
   /** Whatever the prediction used for this slot. */
   chosen:
     | { type: "hypothetical_perfect" }
-    | { type: "resource"; resourceId: string; resourceName: string };
+    | { type: "resource"; resourceId: string; resourceName: string }
+    | { type: "manual"; stats: Partial<ResourceStats> };
+  /** True when this slot is a sub-component slot (ingredientType ≠ 0). */
+  isSubComponent: boolean;
 }
 
 export interface SimulatorPredictedGroup {
@@ -336,6 +348,10 @@ export interface SimulatorPredictResult {
   slots: SimulatorSlotInfo[];
   /** "perfect" iff every slot is hypothetical-perfect; "mixed" otherwise. */
   slotConfigSummary: "perfect" | "mixed";
+  /** Stats with weight > 0 in at least one of the parent's property groups.
+   * Used by the UI to filter the manual-entry inputs down to the ones that
+   * actually affect predictions. */
+  relevantStats: StatKey[];
   assumptions: {
     skillProfile: SimulatorSkillProfile;
     assemblyTier: number;

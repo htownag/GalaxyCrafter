@@ -1925,17 +1925,16 @@ export function registerSimulatorHandlers(): void {
         weights: weightsByGroup.get(g.id) ?? [],
       }));
 
-      // Raw slots on this schematic.
-      const rawSlots = db
+      // All slots on this schematic — both raw resource (ingredientType=0)
+      // AND sub-component slots (ingredientType≠0). Sub-component slots get
+      // the manual-entry UI in the picker; raw slots get owned/spawn options.
+      const allSlots = db
         .select()
         .from(schematicSlots)
-        .where(
-          and(
-            eq(schematicSlots.schematicId, input.schematicId),
-            eq(schematicSlots.ingredientType, 0),
-          ),
-        )
+        .where(eq(schematicSlots.schematicId, input.schematicId))
         .all();
+      const rawSlots = allSlots.filter((s) => s.ingredientType === 0);
+      const subComponentSlots = allSlots.filter((s) => s.ingredientType !== 0);
 
       // Resolve owned + spawn fit options per slot. We need:
       //   1. All resources that could possibly fit ANY of these slots, with their stats.
@@ -2013,36 +2012,53 @@ export function registerSimulatorHandlers(): void {
           : [];
       const typeNameById = new Map(typeRows.map((t) => [t.id, t.displayName]));
 
-      // Build per-slot fit options.
-      const slotInfos: SimulatorSlotInfo[] = rawSlots.map((slot) => {
+      // Build per-slot fit options. Raw resource slots get owned/spawn options;
+      // sub-component slots get empty option lists (the UI offers manual entry).
+      const buildSlotInfo = (
+        slot: typeof allSlots[number],
+        isSubComponent: boolean,
+      ): SimulatorSlotInfo => {
         const ownedOptions: SimulatorSlotOption[] = [];
         const spawnOptions: SimulatorSlotOption[] = [];
 
-        for (const r of resourceRows) {
-          const fits = resourceTypeFitsRawSlot(r.typeId, slot.ingredientObject, typeAncestors);
-          if (!fits) continue;
-          const opt: SimulatorSlotOption = {
-            resourceId: r.id,
-            resourceName: r.name,
-            source: invByResource.has(r.id) ? "owned" : "spawn",
-            ownedUnits: invByResource.get(r.id)?.unitsOnHand ?? undefined,
-            oq: r.oq,
-            typeDisplayName: typeNameById.get(r.typeId) ?? r.typeId,
-          };
-          if (opt.source === "owned") ownedOptions.push(opt);
-          if (spawnIds.has(r.id)) spawnOptions.push({ ...opt, source: "spawn" });
+        if (!isSubComponent) {
+          for (const r of resourceRows) {
+            const fits = resourceTypeFitsRawSlot(r.typeId, slot.ingredientObject, typeAncestors);
+            if (!fits) continue;
+            const opt: SimulatorSlotOption = {
+              resourceId: r.id,
+              resourceName: r.name,
+              source: invByResource.has(r.id) ? "owned" : "spawn",
+              ownedUnits: invByResource.get(r.id)?.unitsOnHand ?? undefined,
+              oq: r.oq,
+              typeDisplayName: typeNameById.get(r.typeId) ?? r.typeId,
+            };
+            if (opt.source === "owned") ownedOptions.push(opt);
+            if (spawnIds.has(r.id)) spawnOptions.push({ ...opt, source: "spawn" });
+          }
+          ownedOptions.sort((a, b) => a.resourceName.localeCompare(b.resourceName));
+          spawnOptions.sort((a, b) => a.resourceName.localeCompare(b.resourceName));
         }
-        ownedOptions.sort((a, b) => a.resourceName.localeCompare(b.resourceName));
-        spawnOptions.sort((a, b) => a.resourceName.localeCompare(b.resourceName));
 
-        // Resolve the user's choice (or default to perfect).
+        // Resolve the user's choice. Sub-component slots default to "manual
+        // with all zeros" so they contribute 0 to the parent's weighted-value
+        // unless the user types something in. Raw slots default to perfect.
         const userChoice: SimulatorSlotChoice | undefined = input.slotChoices?.[slot.slotName];
         let chosen: SimulatorSlotInfo["chosen"];
+
         if (userChoice?.type === "resource") {
           const r = resourceById.get(userChoice.resourceId);
           chosen = r
             ? { type: "resource", resourceId: r.id, resourceName: r.name }
-            : { type: "hypothetical_perfect" };
+            : isSubComponent
+              ? { type: "manual", stats: {} }
+              : { type: "hypothetical_perfect" };
+        } else if (userChoice?.type === "manual") {
+          chosen = { type: "manual", stats: userChoice.stats };
+        } else if (userChoice?.type === "hypothetical_perfect") {
+          chosen = { type: "hypothetical_perfect" };
+        } else if (isSubComponent) {
+          chosen = { type: "manual", stats: {} };
         } else {
           chosen = { type: "hypothetical_perfect" };
         }
@@ -2054,8 +2070,26 @@ export function registerSimulatorHandlers(): void {
           ownedOptions,
           spawnOptions,
           chosen,
+          isSubComponent,
         };
-      });
+      };
+
+      const slotInfos: SimulatorSlotInfo[] = [
+        ...rawSlots.map((s) => buildSlotInfo(s, false)),
+        ...subComponentSlots.map((s) => buildSlotInfo(s, true)),
+      ];
+
+      // Stats actually weighted in this schematic — for filtering the
+      // manual-entry UI to just the relevant inputs.
+      const relevantStats: StatKey[] = (() => {
+        const seen = new Set<StatKey>();
+        for (const g of propertyGroups) {
+          for (const w of g.weights) {
+            if (w.weight > 0) seen.add(w.stat);
+          }
+        }
+        return Array.from(seen);
+      })();
 
       // Build the SlotFill[] the math core will score against.
       const slots: SlotFill[] = slotInfos.map((info) => {
@@ -2076,6 +2110,22 @@ export function registerSimulatorHandlers(): void {
             };
             return { unitsRequired: info.unitsRequired, stats };
           }
+        }
+        if (info.chosen.type === "manual") {
+          const m = info.chosen.stats;
+          const stats: ResourceStatsVector = {
+            CR: m.CR ?? 0,
+            CD: m.CD ?? 0,
+            DR: m.DR ?? 0,
+            HR: m.HR ?? 0,
+            FL: m.FL ?? 0,
+            MA: m.MA ?? 0,
+            PE: m.PE ?? 0,
+            OQ: m.OQ ?? 0,
+            SR: m.SR ?? 0,
+            UT: m.UT ?? 0,
+          };
+          return { unitsRequired: info.unitsRequired, stats };
         }
         // Fall through to hypothetical-perfect when no choice (or stale id).
         return hypotheticalPerfectFill(info.unitsRequired);
@@ -2106,6 +2156,7 @@ export function registerSimulatorHandlers(): void {
         },
         slots: slotInfos,
         slotConfigSummary: summary,
+        relevantStats,
         assumptions: {
           skillProfile: profile,
           assemblyTier: tier,

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type {
   ActiveSchematicEntry,
+  ResourceStats,
   SchematicSummary,
   SimulatorPredictResult,
   SimulatorSkillProfile,
   SimulatorSlotChoice,
   SimulatorSlotInfo,
+  StatKey,
 } from "@shared/ipc-types";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
@@ -240,6 +242,7 @@ export function Simulator(): JSX.Element {
                 <SlotPicker
                   key={slot.slotName}
                   slot={slot}
+                  relevantStats={result.relevantStats}
                   onChange={(c) => setSlotChoice(slot.slotName, c)}
                 />
               ))}
@@ -406,20 +409,32 @@ function SkillNumber({
 }
 
 const HYPOTHETICAL_VALUE = "__perfect__";
+const MANUAL_VALUE = "__manual__";
 
 function SlotPicker({
   slot,
+  relevantStats,
   onChange,
 }: {
   slot: SimulatorSlotInfo;
+  relevantStats: StatKey[];
   onChange: (choice: SimulatorSlotChoice) => void;
 }): JSX.Element {
   const selectedValue =
-    slot.chosen.type === "resource" ? slot.chosen.resourceId : HYPOTHETICAL_VALUE;
+    slot.chosen.type === "resource"
+      ? slot.chosen.resourceId
+      : slot.chosen.type === "manual"
+        ? MANUAL_VALUE
+        : HYPOTHETICAL_VALUE;
 
   function handleChange(v: string): void {
     if (v === HYPOTHETICAL_VALUE) {
       onChange({ type: "hypothetical_perfect" });
+    } else if (v === MANUAL_VALUE) {
+      // Preserve existing manual stats if we're already in manual mode;
+      // otherwise start with empty (zero) entries.
+      const stats = slot.chosen.type === "manual" ? slot.chosen.stats : {};
+      onChange({ type: "manual", stats });
     } else {
       onChange({ type: "resource", resourceId: v });
     }
@@ -427,18 +442,25 @@ function SlotPicker({
 
   const ownedCount = slot.ownedOptions.length;
   const spawnCount = slot.spawnOptions.length;
+  const showOwned = !slot.isSubComponent && ownedCount > 0;
+  const showSpawn = !slot.isSubComponent && spawnCount > 0;
 
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs text-slate-200">
           {humanSlotName(slot.slotName)}
+          {slot.isSubComponent && (
+            <span className="ml-1 text-[10px] text-slate-500 font-normal">
+              (sub-component)
+            </span>
+          )}
         </span>
         <span
-          className="text-[10px] font-mono text-slate-500"
+          className="text-[10px] font-mono text-slate-500 truncate max-w-[180px]"
           title={`Accepts ${slot.ingredientObject}. Needs ${slot.unitsRequired} units.`}
         >
-          {slot.unitsRequired}u · {slot.ingredientObject}
+          {slot.unitsRequired}u · {shortRef(slot.ingredientObject)}
         </span>
       </div>
       <select
@@ -446,10 +468,15 @@ function SlotPicker({
         onChange={(e) => handleChange(e.target.value)}
         className="w-full px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-slate-100"
       >
-        <option value={HYPOTHETICAL_VALUE}>
-          Hypothetical perfect (1000 stats)
-        </option>
-        {ownedCount > 0 && (
+        {!slot.isSubComponent && (
+          <option value={HYPOTHETICAL_VALUE}>
+            Hypothetical perfect (1000 stats)
+          </option>
+        )}
+        {slot.isSubComponent && (
+          <option value={MANUAL_VALUE}>Manual stat entry</option>
+        )}
+        {showOwned && (
           <optgroup label={`Owned (${ownedCount})`}>
             {slot.ownedOptions.map((o) => (
               <option key={`o-${o.resourceId}`} value={o.resourceId}>
@@ -459,7 +486,7 @@ function SlotPicker({
             ))}
           </optgroup>
         )}
-        {spawnCount > 0 && (
+        {showSpawn && (
           <optgroup label={`Currently spawning (${spawnCount})`}>
             {slot.spawnOptions.map((o) => (
               <option key={`s-${o.resourceId}`} value={o.resourceId}>
@@ -468,12 +495,113 @@ function SlotPicker({
             ))}
           </optgroup>
         )}
-        {ownedCount === 0 && spawnCount === 0 && (
+        {!slot.isSubComponent && (
+          <option value={MANUAL_VALUE}>Manual stat entry</option>
+        )}
+        {!slot.isSubComponent && ownedCount === 0 && spawnCount === 0 && (
           <option disabled value="">— no matching resources known —</option>
         )}
       </select>
+
+      {slot.chosen.type === "manual" && (
+        <ManualStatPanel
+          stats={slot.chosen.stats}
+          relevantStats={relevantStats}
+          onChange={(stats) => onChange({ type: "manual", stats })}
+        />
+      )}
     </div>
   );
+}
+
+function ManualStatPanel({
+  stats,
+  relevantStats,
+  onChange,
+}: {
+  stats: Partial<ResourceStats>;
+  relevantStats: StatKey[];
+  onChange: (next: Partial<ResourceStats>) => void;
+}): JSX.Element {
+  // Display only stats this parent schematic actually weights. If the parent
+  // weighs no stats (e.g. a non-scoreable schematic), fall back to "show all
+  // 10" so the user has somewhere to type.
+  const shown: StatKey[] =
+    relevantStats.length > 0
+      ? relevantStats
+      : ["OQ", "CR", "CD", "DR", "FL", "HR", "MA", "PE", "SR", "UT"];
+
+  function setOne(stat: StatKey, raw: string): void {
+    const n = raw === "" ? undefined : Math.max(0, Math.min(1000, Number(raw) || 0));
+    const next = { ...stats };
+    if (n === undefined) {
+      delete next[stat];
+    } else {
+      next[stat] = n;
+    }
+    onChange(next);
+  }
+
+  function reset(value: number): void {
+    const next: Partial<ResourceStats> = {};
+    if (value > 0) {
+      for (const s of shown) next[s] = value;
+    }
+    onChange(next);
+  }
+
+  return (
+    <div className="mt-2 p-2 rounded border border-slate-700/60 bg-slate-950">
+      <div className="grid grid-cols-2 gap-1.5 mb-2">
+        {shown.map((s) => (
+          <label
+            key={s}
+            className="flex items-center justify-between gap-1 text-[10px] text-slate-300"
+          >
+            <span className="font-mono text-slate-400 w-6">{s}</span>
+            <input
+              type="number"
+              min={0}
+              max={1000}
+              placeholder="0"
+              value={stats[s] ?? ""}
+              onChange={(e) => setOne(s, e.target.value)}
+              className="w-16 px-1 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-100 text-right text-[11px]"
+            />
+          </label>
+        ))}
+      </div>
+      <div className="flex gap-1.5 text-[10px]">
+        <button
+          type="button"
+          onClick={() => reset(0)}
+          className="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+        >
+          Reset to 0
+        </button>
+        <button
+          type="button"
+          onClick={() => reset(1000)}
+          className="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+        >
+          Fill 1000
+        </button>
+      </div>
+      {relevantStats.length === 0 && (
+        <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+          This schematic doesn't weight any stats — manual entry is shown for
+          reference only.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Trim a long IFF path to its final filename for tight display. */
+function shortRef(s: string): string {
+  if (!s.includes("/")) return s;
+  const last = s.split("/").pop() ?? s;
+  return last.replace(/\.iff$/, "");
 }
 
 /** Human-format a slot key like "frame_assembly" → "Frame Assembly". */
