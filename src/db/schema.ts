@@ -316,14 +316,15 @@ export const activeSchematics = sqliteTable(
 
 // One row per (character, resource). Holds the user's owned units of a
 // resource and a status — Phase 4 Stage A treats status as user-driven
-// metadata only; auto-detection of live↔banked transitions when a
-// resource despawns is a Stage D polish. Reserved partitioning (e.g.
-// "5000 units reserved for the next T21 batch, 3000 still available")
-// is one row per stash for v1 — composite PK on (character, resource)
-// means a single row per resource per character; per-build reservation
-// becomes a separate join table when the simulator (Phase 6) lands.
+// metadata initially, with auto-flip from 'live' → 'despawned' wired
+// into the snapshot ingest pipeline (Phase 4E). Reserved partitioning
+// (e.g. "5000 units reserved for the next T21 batch, 3000 still
+// available") is one row per stash for v1 — composite PK on
+// (character, resource) means a single row per resource per character;
+// per-build reservation becomes a separate join table when the
+// simulator (Phase 6) lands.
 //
-// units >= 0; status is one of 'live' | 'banked' | 'reserved'. notes is
+// units >= 0; status is one of 'live' | 'despawned' | 'reserved'. notes is
 // user free-text for "where I have this stashed" or "ear-marked for X".
 export const inventoryEntries = sqliteTable(
   "inventory_entries",
@@ -331,7 +332,7 @@ export const inventoryEntries = sqliteTable(
     characterId: text("character_id").notNull(),
     resourceId: text("resource_id").notNull(),
     units: integer("units").notNull().default(0),
-    status: text("status").notNull(), // 'live' | 'banked' | 'reserved'
+    status: text("status").notNull(), // 'live' | 'despawned' | 'reserved'
     notes: text("notes"),
     addedAt: integer("added_at").notNull(),
     updatedAt: integer("updated_at").notNull(),

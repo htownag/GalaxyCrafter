@@ -3,17 +3,17 @@ import { Link } from "react-router-dom";
 import type { InventoryEntry, InventoryStatus, Resource } from "@shared/ipc-types";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
-const STATUS_OPTIONS: InventoryStatus[] = ["live", "banked", "reserved"];
+const STATUS_OPTIONS: InventoryStatus[] = ["live", "despawned", "reserved"];
 
 const STATUS_PILL: Record<InventoryStatus, string> = {
   live: "bg-emerald-900/40 border-emerald-700 text-emerald-200",
-  banked: "bg-slate-800 border-slate-700 text-slate-300",
+  despawned: "bg-slate-800 border-slate-700 text-slate-300",
   reserved: "bg-amber-900/40 border-amber-700 text-amber-200",
 };
 
 const STATUS_HELP: Record<InventoryStatus, string> = {
   live: "still spawning — harvesters can keep extracting",
-  banked: "despawned — what's in your crate is all you'll ever have",
+  despawned: "no longer spawning — what's in your crate is all you'll ever have",
   reserved: "earmarked for a specific schematic build",
 };
 
@@ -169,7 +169,7 @@ function AddResourcePanel({
           {query.trim().length >= 2 && matches.length === 0 && (
             <div className="absolute z-10 left-0 right-0 mt-1 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-500">
               No matches in current snapshot. (The resource may have despawned — record it as
-              `banked` once we add free-form entry. For now, only currently-spawning resources can
+              `despawned` once we add free-form entry. For now, only currently-spawning resources can
               be added.)
             </div>
           )}
@@ -421,7 +421,7 @@ export function Inventory(): JSX.Element {
   // Group by status for at-a-glance counts in the header.
   const counts: Record<InventoryStatus, { rows: number; units: number }> = {
     live: { rows: 0, units: 0 },
-    banked: { rows: 0, units: 0 },
+    despawned: { rows: 0, units: 0 },
     reserved: { rows: 0, units: 0 },
   };
   for (const e of entries) {
@@ -440,7 +440,7 @@ export function Inventory(): JSX.Element {
             <>
               {" · "}
               <span className="text-emerald-300">{counts.live.rows} live</span>{" · "}
-              <span className="text-slate-400">{counts.banked.rows} banked</span>{" · "}
+              <span className="text-slate-400">{counts.despawned.rows} despawned</span>{" · "}
               <span className="text-amber-300">{counts.reserved.rows} reserved</span>
             </>
           )}

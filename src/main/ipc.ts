@@ -969,7 +969,7 @@ export function registerIpc(): void {
     "inventory:upsert",
     async (_evt, input: InventoryUpsertInput): Promise<InventoryEntry> => {
       if (input.units < 0) throw new Error("units cannot be negative");
-      if (!["live", "banked", "reserved"].includes(input.status)) {
+      if (!["live", "despawned", "reserved"].includes(input.status)) {
         throw new Error(`invalid status: ${input.status}`);
       }
       const db = getDb();

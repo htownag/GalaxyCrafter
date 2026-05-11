@@ -49,7 +49,7 @@ function VerdictPill({ verdict }: { verdict: VerdictEntry }): JSX.Element {
 // resource. Tooltip surfaces units + status + notes for context.
 function OwnedTag({ entry }: { entry: InventoryEntry }): JSX.Element {
   // Slate-cyan family — distinct from emerald (CHASE) / amber (MAYBE).
-  // Status modulates the saturation: live = brighter, banked = muted,
+  // Status modulates the saturation: live = brighter, despawned = muted,
   // reserved = slight amber tint to remind it's committed.
   const cls =
     entry.status === "live"

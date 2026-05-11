@@ -279,7 +279,7 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
   // resources of compatible type. Empty map (or 0 lookups) = empty-
   // inventory path in matchTier, which preserves Phase 3 behaviour.
   //
-  // Owned resources may not be in the current snapshot (e.g. banked); load
+  // Owned resources may not be in the current snapshot (e.g. despawned); load
   // them by ID separately. Union those typeIds with the snapshot typeIds
   // when fetching the type-ancestor edge subset below.
   const inventoryRows = db
@@ -309,7 +309,7 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
   }
 
   // Type→ancestor edges. Pull the union — covers both candidate resources
-  // (current snapshot) and owned resources (may be banked / not spawning).
+  // (current snapshot) and owned resources (may be despawned / not spawning).
   const tgEdges = db
     .select()
     .from(resourceTypeGroups)

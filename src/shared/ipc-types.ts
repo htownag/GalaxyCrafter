@@ -54,6 +54,12 @@ export interface RefreshResult {
   snapshot: SnapshotSummary;
   newResourceCount: number;
   despawnedResourceCount: number;
+  /**
+   * Count of inventory rows auto-flipped from `live` → `despawned` because
+   * the resource they reference is no longer in the latest snapshot.
+   * Cross-character. Phase 4E.
+   */
+  inventoryAutoFlipped: number;
   durationMs: number;
 }
 
@@ -164,7 +170,7 @@ export interface CreateCharacterInput {
 
 // === Phase 4: inventory ===
 
-export type InventoryStatus = "live" | "banked" | "reserved";
+export type InventoryStatus = "live" | "despawned" | "reserved";
 
 export interface InventoryEntry {
   characterId: string;

@@ -3,9 +3,15 @@
 // the snapshot history.
 
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { getDb } from "../db";
-import { resourceObservations, resourcePlanets, resources, snapshots } from "../db/schema";
+import {
+  inventoryEntries,
+  resourceObservations,
+  resourcePlanets,
+  resources,
+  snapshots,
+} from "../db/schema";
 import type { RefreshResult } from "../shared/ipc-types";
 import { fetchCurrentSnapshot } from "./fetcher";
 import { parseSnapshot } from "./parser";
@@ -23,6 +29,8 @@ export async function runIngest(galaxyId: number): Promise<RefreshResult> {
   const db = getDb();
 
   let newCount = 0;
+  let autoFlippedCount = 0;
+  const snapshotResourceIds = parsed.resources.map((r) => r.id);
 
   db.transaction((tx) => {
     tx.insert(snapshots)
@@ -80,11 +88,33 @@ export async function runIngest(galaxyId: number): Promise<RefreshResult> {
         tx.insert(resourcePlanets).values({ resourceId: r.id, planet: p }).run();
       }
     }
+
+    // Phase 4E: auto-flip live → despawned for any inventory rows whose
+    // resource isn't in this snapshot. Cross-character (affects every
+    // character on this galaxy that has a stale 'live' entry). Reserved
+    // entries are intentionally untouched — they're a player-driven axis
+    // and a despawn doesn't change whether units are still earmarked.
+    if (snapshotResourceIds.length > 0) {
+      const flipped = tx
+        .update(inventoryEntries)
+        .set({ status: "despawned", updatedAt: fetchedAt })
+        .where(
+          and(
+            eq(inventoryEntries.status, "live"),
+            notInArray(inventoryEntries.resourceId, snapshotResourceIds),
+          ),
+        )
+        .returning()
+        .all();
+      autoFlippedCount = flipped.length;
+    }
   });
 
   const durationMs = Date.now() - t0;
   console.log(
-    `[ingest] done in ${durationMs}ms: ${parsed.resources.length} total, ${newCount} new`,
+    `[ingest] done in ${durationMs}ms: ${parsed.resources.length} total, ${newCount} new${
+      autoFlippedCount > 0 ? `, auto-flipped ${autoFlippedCount} inventory live → despawned` : ""
+    }`,
   );
 
   return {
@@ -95,8 +125,10 @@ export async function runIngest(galaxyId: number): Promise<RefreshResult> {
       resourceCount: parsed.resources.length,
     },
     newResourceCount: newCount,
-    // TODO Phase 2: diff against previous snapshot to compute despawn count.
+    // TODO Phase 6: diff resource_observations vs prior snapshot for the
+    // global despawn count (independent of any character's inventory).
     despawnedResourceCount: 0,
+    inventoryAutoFlipped: autoFlippedCount,
     durationMs,
   };
 }
