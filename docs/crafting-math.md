@@ -11,6 +11,8 @@
 > - Stat index → attribute mapping (§3) — confirmed against `ResourceSpawnImplementation.cpp:43` + `CraftingManager.idl:26-35`.
 > - `calculateAssemblyValueModifier` table (§4) — confirmed against `SharedLabratory.cpp:59`.
 > - `calculateExperimentationValueModifier` table (§5c) — confirmed against `SharedLabratory.cpp:21`.
+>
+> **SR2-vs-vanilla diff (2026-05-11)** — `diff -r ~/workspace/Core3/.../crafting/ ~/workspace/srswgemu2/.../crafting/` ran clean except for **three deltas** captured in §11 below. `ResourceSpawnImplementation.cpp` and all `SharedLabratory.cpp` formulas are byte-identical between vanilla Core3 master and SR2. The simulator MUST encode the §11 deltas when targeting SR2.
 
 ---
 
@@ -380,3 +382,75 @@ Big red modal before the bake step: "You're about to lock in `craftingValues` fo
 - **Schematic dependency graph integration.** Phase 2 imported the parent→child schematic graph. The simulator should walk it when offering "Configure sub-components for this T21 build" UX.
 - **Random seed handling.** Monte Carlo should be deterministic in test mode (seeded), production may use system random. Wire seeding through the Simulator IPC.
 - **Price input source.** Phase 6 needs persistent storage for "my typical sale price" and "price elasticity" — likely a new `crafter_prices` table or extension to `characters`. Tiny addition.
+
+---
+
+## 11. SR2 fork deltas (target server)
+
+The SR2 fork (`~/workspace/srswgemu2/`) is **GalaxyCrafter's primary target server**. Three crafting-math divergences from vanilla Core3 exist on master as of 2026-05-11. The simulator must model these.
+
+### 11.1 Experimentation roll +5% bonus (all rolls, all schematics)
+
+**Source:** `SR2:CraftingManagerImplementation.cpp:112` (single inserted line):
+
+```cpp
+experimentRoll = static_cast<int>(experimentRoll * 1.05f); // 5% bonus for experimentation
+```
+
+Inserted **after** the standard `experimentRoll = toolModifier × (luckRoll + experimentingPoints × 4)` formula and **before** the tier thresholds. **Effect:** every experimentation tier threshold drops by ~4.76% on SR2:
+
+| Tier | Vanilla threshold | SR2 effective threshold |
+|------|------------------:|------------------------:|
+| GREATSUCCESS    | `> 70` | `> 66.67` |
+| GOODSUCCESS     | `> 60` | `> 57.14` |
+| MODERATESUCCESS | `> 50` | `> 47.62` |
+| SUCCESS         | `> 40` | `> 38.10` |
+| MARGINALSUCCESS | `> 30` | `> 28.57` |
+| OK              | `> 20` | `> 19.05` |
+
+In practice: SR2 makes experimentation meaningfully easier across the board (most rolls bump up one tier on the margin). Simulator must apply the `× 1.05` post-formula or all predicted outputs will be conservative.
+
+**Implementation:** add a `serverProfile: 'vanilla' | 'sr2'` flag to `simulateExperimentRow`. Default `sr2`. Test fixtures cover both branches.
+
+### 11.2 Padded armor S01 belt skip
+
+**Source:** `SR2:labratories/ResourceLabratory.cpp:254-260`:
+
+```cpp
+String fullTemplateString = prototype->getObjectTemplate()->getFullTemplateString();
+if ((fullTemplateString == "object/tangible/wearables/armor/padded/armor_padded_s01_belt.iff" &&
+     (attribute == "armor_effectiveness" || attribute == "armor_health_encumbrance" ||
+      attribute == "armor_action_encumbrance" || attribute == "armor_mind_encumbrance"))) {
+    continue;
+}
+```
+
+Narrow special case. For one specific belt schematic, four specific attributes (`armor_effectiveness` + three encumbrance values) are **skipped** during `setInitialCraftingValues` — they stay at their draft-default values rather than being computed from resources. Likely a balance patch for a problematic belt.
+
+**Simulator implication:** when modelling padded s01 belt, do not compute these four attributes from resource weights. Either hardcode the skip OR (better) source the skip list from a server-side config table the simulator can query.
+
+### 11.3 Patch-K — DOT-component contribution to crafted weapons
+
+**Source:** `SR2:CraftingSessionImplementation.cpp:1570-1594` (mod-side insert, comment-tagged `ExtractionMod Patch-K`):
+
+```cpp
+// Loot-side variants (rancor_tooth / vibro_unit_nightsister / scope_weapon_advanced)
+// drop with dotType/dotAttribute/dotStrength/dotDuration/dotPotency/dotUses keys
+// in their attributeMap; we read those and stack them onto the weapon.
+for (each component slot)
+    if (component has "dotType" attribute):
+        weapon->addDotType( component.getAttributeValue("dotType") )
+        weapon->addDotAttribute( component.getAttributeValue("dotAttribute") × 3 )
+        weapon->addDotStrength( component.getAttributeValue("dotStrength") )
+        weapon->addDotDuration( component.getAttributeValue("dotDuration") )
+        weapon->addDotPotency( component.getAttributeValue("dotPotency") )
+        weapon->addDotUses( component.getAttributeValue("dotUses") )
+```
+
+Looted exotic sub-components (Rancor Tooth, Nightsister Vibro Unit, Advanced Scope) carry pre-set DOT attributes on their `attributeMap`. When inserted into a weapon-schematic component slot, Patch-K stacks the DOT onto the finished weapon. Crucially: `dotAttribute` is rolled as a HAM-pool index (0=Health, 1=Action, 2=Mind) and multiplied by 3 to produce the SWG `CreatureAttribute` value.
+
+**Note:** the magic bit is deliberately NOT set, so DOT-crafted weapons remain sliceable + poweruppable. This is intentional balance.
+
+**Simulator implication:** if the user puts a DOT-bearing sub-component in a weapon schematic slot, the simulator must surface "this weapon will gain {N} DOTs from sub-components" in the predicted output. Pull DOT attributes from the inventory item's `attributeMap` (we already store component sub-properties via SB flag pipeline; same plumbing). Add a `predictedDots: Array<{ type, attribute, strength, duration, potency, uses }>` field to the simulator output.
+
+**Substitutability cross-reference:** see memory note `SWG component substitution via IFF` — these looted exotics substitute into weapon slots via IFF derivedFrom hierarchy, not Lua schematic edits. The simulator's slot-compat check (already implemented in `core/verdict/compat.ts`) must already handle this; Patch-K just adds the **output projection** for DOT stacking.
