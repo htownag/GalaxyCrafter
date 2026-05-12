@@ -58,6 +58,12 @@ const api: IpcApi = {
   getSchematicDepTree: (schematicId, maxDepth) =>
     ipcRenderer.invoke("schematics:depTree", schematicId, maxDepth),
 
+  // Phase 9c — Settings
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  saveVerdictThresholds: (t) => ipcRenderer.invoke("settings:saveThresholds", t),
+  resetVerdictThresholds: () => ipcRenderer.invoke("settings:resetThresholds"),
+  exportUserData: () => ipcRenderer.invoke("settings:exportUserData"),
+
   // Phase 4E — GH single-resource lookup
   lookupGhResource: (input) => ipcRenderer.invoke("gh:lookupResource", input),
   onVerdictsUpdated: (listener) => {

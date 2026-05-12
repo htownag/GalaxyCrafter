@@ -14,7 +14,12 @@
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../../core/verdict/compat";
-import { matchTier, rollupResourceVerdict } from "../../core/verdict/rollup";
+import {
+  DEFAULT_THRESHOLDS,
+  matchTier,
+  rollupResourceVerdict,
+  type VerdictThresholds,
+} from "../../core/verdict/rollup";
 import { scoreGroup } from "../../core/verdict/score";
 import type { ResourceStats, ScoredMatch, StatWeight } from "../../core/verdict/types";
 import { getDb } from "../../db";
@@ -30,9 +35,36 @@ import {
   schematicPropertyWeights,
   schematicSlots,
   schematics,
+  settings,
   snapshots,
   verdicts,
 } from "../../db/schema";
+
+/**
+ * Pull verdict-threshold overrides from the settings table. Each key
+ * `verdict.<field>` is checked individually; absent / non-numeric values
+ * fall back to the corresponding DEFAULT_THRESHOLDS field. So a player can
+ * override one knob without resetting the others.
+ */
+export function loadVerdictThresholds(): VerdictThresholds {
+  const db = getDb();
+  const rows = db.select().from(settings).all();
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  function num(key: keyof VerdictThresholds, fallback: number): number {
+    const raw = byKey.get(`verdict.${key}`);
+    if (raw === undefined || raw === null) return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  return {
+    absChase: num("absChase", DEFAULT_THRESHOLDS.absChase),
+    absMaybe: num("absMaybe", DEFAULT_THRESHOLDS.absMaybe),
+    deltaChase: num("deltaChase", DEFAULT_THRESHOLDS.deltaChase),
+    deltaMaybe: num("deltaMaybe", DEFAULT_THRESHOLDS.deltaMaybe),
+    highScoreChase: num("highScoreChase", DEFAULT_THRESHOLDS.highScoreChase),
+    highScoreMaybe: num("highScoreMaybe", DEFAULT_THRESHOLDS.highScoreMaybe),
+  };
+}
 
 interface ActiveSchematicScoringContext {
   schematicId: string;
@@ -187,6 +219,10 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
   const db = getDb();
   const char = db.select().from(characters).where(eq(characters.id, characterId)).get();
   if (!char) throw new Error(`recomputeVerdicts: character not found: ${characterId}`);
+
+  // Pull thresholds from settings once per recompute. Threading them through
+  // matchTier downstream so per-match decisions honor the player's overrides.
+  const thresholds = loadVerdictThresholds();
 
   const latestSnapshot = db
     .select()
@@ -377,7 +413,7 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
           expGroup: g.expGroup,
           score,
           scoreOwned,
-          tier: matchTier(score, scoreOwned),
+          tier: matchTier(score, scoreOwned, thresholds),
           inheritedFromParent: ctx.inheritedFromParent,
         });
       }

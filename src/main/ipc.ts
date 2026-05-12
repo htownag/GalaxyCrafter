@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { and, desc, eq, inArray, like, or } from "drizzle-orm";
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow, app, dialog, ipcMain } from "electron";
 import galaxiesConfig from "../../reference-data/galaxies.json";
 import { getDb } from "../db";
 import {
@@ -57,7 +58,8 @@ import { professionForSkillGroup } from "../shared/professions";
 import { buildTypeAncestorMap, resourceTypeFitsRawSlot } from "../core/verdict/compat";
 import { scoreGroup } from "../core/verdict/score";
 import type { ResourceStats, StatWeight } from "../core/verdict/types";
-import { recomputeVerdicts } from "./verdict/recompute";
+import { loadVerdictThresholds, recomputeVerdicts } from "./verdict/recompute";
+import { DEFAULT_THRESHOLDS } from "../core/verdict/rollup";
 import {
   HARVESTERS,
   type HarvesterBucket as PlannerBucket,
@@ -88,12 +90,15 @@ import type {
   SchematicDepNode,
   SchematicDepRawSlot,
   SchematicDepTreeResult,
+  SettingsExportResult,
+  SettingsSnapshot,
   SimulatorPredictInput,
   SimulatorPredictResult,
   SimulatorSlotChoice,
   SimulatorSlotInfo,
   SimulatorSlotOption,
   StatKey,
+  VerdictThresholdsView,
 } from "../shared/ipc-types";
 
 interface GalaxyConfig {
@@ -1877,6 +1882,9 @@ export function registerIpc(): void {
 
   // Wire Phase 9b dependency-tree handler.
   registerDepTreeHandler();
+
+  // Wire Phase 9c settings handlers (threshold overrides + data export).
+  registerSettingsHandlers();
 }
 
 function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResult {
@@ -2697,4 +2705,122 @@ export function registerSimulatorHandlers(): void {
       };
     },
   );
+}
+
+// === Phase 9c: Settings ===
+
+const THRESHOLD_KEYS = [
+  "absChase",
+  "absMaybe",
+  "deltaChase",
+  "deltaMaybe",
+  "highScoreChase",
+  "highScoreMaybe",
+] as const;
+
+function readSettingsSnapshot(): SettingsSnapshot {
+  const t = loadVerdictThresholds();
+  const customised = THRESHOLD_KEYS.some(
+    (k) => t[k] !== DEFAULT_THRESHOLDS[k],
+  );
+  return { thresholds: t, thresholdsCustomised: customised };
+}
+
+function recomputeAllCharacters(): void {
+  const db = getDb();
+  const chars = db.select().from(characters).all();
+  for (const c of chars) {
+    try {
+      recomputeVerdicts(c.id);
+    } catch (e) {
+      console.error(`[settings] recompute failed for ${c.id}:`, e);
+    }
+  }
+  // Notify renderers (Dashboard auto-refresh hooks listen for this).
+  for (const w of BrowserWindow.getAllWindows()) {
+    for (const c of chars) {
+      w.webContents.send("verdicts:updated", { characterId: c.id });
+    }
+  }
+}
+
+export function registerSettingsHandlers(): void {
+  ipcMain.handle("settings:get", async (): Promise<SettingsSnapshot> => {
+    return readSettingsSnapshot();
+  });
+
+  ipcMain.handle(
+    "settings:saveThresholds",
+    async (_evt, t: VerdictThresholdsView): Promise<SettingsSnapshot> => {
+      // Validate numbers, clamp to a sensible 0..100 range.
+      function clamp(v: number): number {
+        if (!Number.isFinite(v)) return 0;
+        return Math.max(0, Math.min(100, v));
+      }
+      const next: VerdictThresholdsView = {
+        absChase: clamp(t.absChase),
+        absMaybe: clamp(t.absMaybe),
+        deltaChase: clamp(t.deltaChase),
+        deltaMaybe: clamp(t.deltaMaybe),
+        highScoreChase: clamp(t.highScoreChase),
+        highScoreMaybe: clamp(t.highScoreMaybe),
+      };
+      for (const k of THRESHOLD_KEYS) setSetting(`verdict.${k}`, String(next[k]));
+      recomputeAllCharacters();
+      return readSettingsSnapshot();
+    },
+  );
+
+  ipcMain.handle("settings:resetThresholds", async (): Promise<SettingsSnapshot> => {
+    const db = getDb();
+    for (const k of THRESHOLD_KEYS) {
+      db.delete(settings).where(eq(settings.key, `verdict.${k}`)).run();
+    }
+    recomputeAllCharacters();
+    return readSettingsSnapshot();
+  });
+
+  ipcMain.handle("settings:exportUserData", async (): Promise<SettingsExportResult> => {
+    const db = getDb();
+    // Pull the user-state tables only. Resources / schematics / snapshots
+    // can be rehydrated from reference data + a fresh GH refresh on a new
+    // install, so exporting them would bloat the file and create stale data
+    // on import. Backups focus on what the player created.
+    const userState = {
+      provenance: {
+        exportedAt: new Date().toISOString(),
+        appVersion: app.getVersion(),
+        platform: process.platform,
+        note: "GalaxyCrafter user data backup. Resources, snapshots, and reference data are NOT included; rehydrate via the app's normal startup + refresh flow on a fresh install.",
+      },
+      characters: db.select().from(characters).all(),
+      professionPriorities: db.select().from(professionPriorities).all(),
+      activeSchematics: db.select().from(activeSchematics).all(),
+      inventoryEntries: db.select().from(inventoryEntries).all(),
+      settings: db.select().from(settings).all(),
+    };
+    const rowCounts: Record<string, number> = {
+      characters: userState.characters.length,
+      professionPriorities: userState.professionPriorities.length,
+      activeSchematics: userState.activeSchematics.length,
+      inventoryEntries: userState.inventoryEntries.length,
+      settings: userState.settings.length,
+    };
+
+    // Prompt for a save location. Use any open window as the dialog parent
+    // so it modally attaches to the app.
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+    const defaultName = `galaxycrafter-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const result = await dialog.showSaveDialog(win ?? undefined as unknown as BrowserWindow, {
+      title: "Export GalaxyCrafter user data",
+      defaultPath: defaultName,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) {
+      return { path: null, bytes: null, rowCounts };
+    }
+    const payload = JSON.stringify(userState, null, 2);
+    await writeFile(result.filePath, payload, "utf8");
+    return { path: result.filePath, bytes: Buffer.byteLength(payload, "utf8"), rowCounts };
+  });
 }

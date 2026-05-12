@@ -35,21 +35,43 @@
 
 import type { ResourceVerdict, ScoredMatch } from "./types";
 
-// Empty-inventory absolute thresholds (Phase 3 baseline, retained as
-// the regression contract on inventory=0 input).
-export const ABS_CHASE_THRESHOLD = 85;
-export const ABS_MAYBE_THRESHOLD = 65;
+/** Tunable verdict thresholds. The defaults preserve the Phase 3 baseline
+ *  as the regression contract; user overrides flow through from the
+ *  settings page via `recompute.ts`. */
+export interface VerdictThresholds {
+  /** Empty-inventory absolute CHASE floor. */
+  absChase: number;
+  /** Empty-inventory absolute MAYBE floor. */
+  absMaybe: number;
+  /** Owned-inventory delta floor for CHASE. */
+  deltaChase: number;
+  /** Owned-inventory delta floor for MAYBE. */
+  deltaMaybe: number;
+  /** Score floor for CHASE on the delta-path (when delta is between
+   *  deltaMaybe and deltaChase). */
+  highScoreChase: number;
+  /** Score floor for unconditional MAYBE on the delta-path. */
+  highScoreMaybe: number;
+}
 
-// Delta-path qualifiers from design doc §5.2.5.
-export const DELTA_CHASE = 8;
-export const DELTA_MAYBE = 3;
-export const HIGH_SCORE_CHASE_FLOOR = 90; // score >= 90 + delta >= 3 → CHASE
-export const HIGH_SCORE_MAYBE_FLOOR = 85; // score >= 85 → MAYBE regardless of delta
+export const DEFAULT_THRESHOLDS: VerdictThresholds = Object.freeze({
+  absChase: 85,
+  absMaybe: 65,
+  deltaChase: 8,
+  deltaMaybe: 3,
+  highScoreChase: 90,
+  highScoreMaybe: 85,
+});
 
-// Backwards-compat exports for any caller still reading the old names.
-// (The legacy single-tier rollupResourceVerdict used these constants.)
-export const CHASE_THRESHOLD = ABS_CHASE_THRESHOLD;
-export const MAYBE_THRESHOLD = ABS_MAYBE_THRESHOLD;
+// Back-compat exports for any caller reading the old constant names.
+export const ABS_CHASE_THRESHOLD = DEFAULT_THRESHOLDS.absChase;
+export const ABS_MAYBE_THRESHOLD = DEFAULT_THRESHOLDS.absMaybe;
+export const DELTA_CHASE = DEFAULT_THRESHOLDS.deltaChase;
+export const DELTA_MAYBE = DEFAULT_THRESHOLDS.deltaMaybe;
+export const HIGH_SCORE_CHASE_FLOOR = DEFAULT_THRESHOLDS.highScoreChase;
+export const HIGH_SCORE_MAYBE_FLOOR = DEFAULT_THRESHOLDS.highScoreMaybe;
+export const CHASE_THRESHOLD = DEFAULT_THRESHOLDS.absChase;
+export const MAYBE_THRESHOLD = DEFAULT_THRESHOLDS.absMaybe;
 
 type Tier = "CHASE" | "MAYBE" | "SKIP";
 
@@ -57,19 +79,25 @@ const TIER_RANK: Record<Tier, number> = { CHASE: 2, MAYBE: 1, SKIP: 0 };
 
 /**
  * Decide the tier for a single (resource, schematic, property-group)
- * match. Pure function of (score, scoreOwned).
+ * match. Pure function of (score, scoreOwned). Thresholds default to
+ * DEFAULT_THRESHOLDS; the recompute orchestrator pulls user overrides
+ * from settings and threads them through.
  */
-export function matchTier(score: number, scoreOwned: number): Tier {
+export function matchTier(
+  score: number,
+  scoreOwned: number,
+  thresholds: VerdictThresholds = DEFAULT_THRESHOLDS,
+): Tier {
   if (scoreOwned <= 0) {
-    if (score >= ABS_CHASE_THRESHOLD) return "CHASE";
-    if (score >= ABS_MAYBE_THRESHOLD) return "MAYBE";
+    if (score >= thresholds.absChase) return "CHASE";
+    if (score >= thresholds.absMaybe) return "MAYBE";
     return "SKIP";
   }
   const delta = score - scoreOwned;
-  if (delta >= DELTA_CHASE) return "CHASE";
-  if (score >= HIGH_SCORE_CHASE_FLOOR && delta >= DELTA_MAYBE) return "CHASE";
-  if (delta >= DELTA_MAYBE) return "MAYBE";
-  if (score >= HIGH_SCORE_MAYBE_FLOOR) return "MAYBE";
+  if (delta >= thresholds.deltaChase) return "CHASE";
+  if (score >= thresholds.highScoreChase && delta >= thresholds.deltaMaybe) return "CHASE";
+  if (delta >= thresholds.deltaMaybe) return "MAYBE";
+  if (score >= thresholds.highScoreMaybe) return "MAYBE";
   return "SKIP";
 }
 

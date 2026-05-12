@@ -262,6 +262,32 @@ export interface FinderResult {
   rows: FinderResultRow[];
 }
 
+// === Phase 9c: Settings ===
+
+export interface VerdictThresholdsView {
+  absChase: number;
+  absMaybe: number;
+  deltaChase: number;
+  deltaMaybe: number;
+  highScoreChase: number;
+  highScoreMaybe: number;
+}
+
+export interface SettingsSnapshot {
+  thresholds: VerdictThresholdsView;
+  /** True iff any threshold is non-default. */
+  thresholdsCustomised: boolean;
+}
+
+export interface SettingsExportResult {
+  /** Where the file was written. Null if user cancelled. */
+  path: string | null;
+  /** Bytes written. Null if cancelled. */
+  bytes: number | null;
+  /** Counts of rows by table, for the toast/UI. */
+  rowCounts: Record<string, number>;
+}
+
 // === Phase 9b: Schematic dependency tree ===
 
 /**
@@ -732,6 +758,12 @@ export interface IpcApi {
 
   // Phase 9b — Schematic dependency tree
   getSchematicDepTree(schematicId: string, maxDepth?: number): Promise<SchematicDepTreeResult | null>;
+
+  // Phase 9c — Settings
+  getSettings(): Promise<SettingsSnapshot>;
+  saveVerdictThresholds(t: VerdictThresholdsView): Promise<SettingsSnapshot>;
+  resetVerdictThresholds(): Promise<SettingsSnapshot>;
+  exportUserData(): Promise<SettingsExportResult>;
 
   // Phase 4E — GH single-resource lookup
   lookupGhResource(input: GhLookupInput): Promise<GhLookupResponse>;

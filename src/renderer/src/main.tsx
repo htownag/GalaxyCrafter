@@ -8,6 +8,7 @@ import { Finder } from "./routes/Finder";
 import { Inventory } from "./routes/Inventory";
 import { Dashboard } from "./routes/Dashboard";
 import { Planner } from "./routes/Planner";
+import { Settings } from "./routes/Settings";
 // Simulator route shelved 2026-05-11 — see App.tsx note.
 // import { Simulator } from "./routes/Simulator";
 import { ResourceDetail } from "./routes/ResourceDetail";
@@ -34,6 +35,7 @@ const router = createHashRouter([
       { path: "planner", element: <Planner /> },
       // { path: "simulator", element: <Simulator /> },
       { path: "character", element: <Character /> },
+      { path: "settings", element: <Settings /> },
     ],
   },
 ]);

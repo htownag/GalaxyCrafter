@@ -17,6 +17,7 @@ const TABS = [
   // this line + the route + import in main.tsx.
   // { to: "/simulator", label: "Simulator" },
   { to: "/character", label: "Character" },
+  { to: "/settings", label: "Settings" },
 ];
 
 function relativeAge(ts: number): string {
