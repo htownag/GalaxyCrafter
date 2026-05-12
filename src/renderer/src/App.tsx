@@ -10,7 +10,11 @@ const TABS = [
   { to: "/inventory", label: "Crates" },
   { to: "/finder", label: "Finder" },
   { to: "/planner", label: "Planner" },
-  { to: "/simulator", label: "Simulator" },
+  // Simulator shelved 2026-05-11 pending UX rework. Code, data, IPC, math
+  // core + 95 tests, migration 0005, and reference-data/schematic-
+  // experimental-ranges.json all remain in place. Re-enable by restoring
+  // this line + the route + import in main.tsx.
+  // { to: "/simulator", label: "Simulator" },
   { to: "/character", label: "Character" },
 ];
 

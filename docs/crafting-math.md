@@ -2,6 +2,8 @@
 
 **Status:** research / planning. Drafted 2026-05-11 from a direct read of Core3's `MMOCoreORB/src/server/zone/managers/crafting/` and `MMOCoreORB/src/server/zone/objects/player/sessions/crafting/`. The simulator (Phase 6) must match these formulas; this doc is the canonical reference the implementation cites.
 
+> **Phase 6 status (2026-05-11):** v1 → v1.3 shipped end-to-end (math core + per-slot picker + sub-component manual entry + experimental-range extraction + predicted final stats UI). **Shelved from the app's nav** pending UX rework. All code, data (`reference-data/schematic-experimental-ranges.json`), tests (95 passing), migration 0005, IPC, and the `Simulator.tsx` route remain in the tree. Re-enable by restoring 2 commented lines in `src/renderer/src/App.tsx` + `src/renderer/src/main.tsx`.
+
 > **Source-citation convention.** `Core3:<path>:<line>` refers to `~/workspace/Core3/MMOCoreORB/src/server/zone/...`. All formulas below are pulled verbatim or paraphrased from Core3's master branch as of read-date 2026-05-11; verify any literal constants against the linked file before locking unit tests on them.
 >
 > **Verified-against-source constants (2026-05-11):**
