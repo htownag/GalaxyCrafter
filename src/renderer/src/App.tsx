@@ -159,26 +159,26 @@ function IngestToast({
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-50 max-w-sm rounded-md border border-emerald-700 bg-slate-900 shadow-lg shadow-emerald-950/50 p-3 text-sm animate-in fade-in"
+      className="fixed bottom-6 right-6 z-50 w-96 max-w-[90vw] rounded-lg border border-emerald-700 bg-slate-900 shadow-xl shadow-emerald-950/60 p-5 animate-in fade-in"
       role="status"
       aria-live="polite"
     >
-      <div className="flex items-start gap-2">
-        <div className="flex-1">
-          <div className="text-emerald-300 font-medium leading-tight mb-0.5">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-emerald-300 font-semibold text-lg leading-tight mb-1">
             Snapshot refreshed
           </div>
-          <div className="text-slate-300 text-xs">
+          <div className="text-slate-200 text-sm leading-snug">
             {parts.length > 0 ? parts.join(" · ") : `${event.resourceCount} resources`}
           </div>
           {verdictLine && (
-            <div className="text-slate-500 text-xs mt-0.5">{verdictLine}</div>
+            <div className="text-slate-400 text-sm mt-1.5">{verdictLine}</div>
           )}
         </div>
         <button
           type="button"
           onClick={onDismiss}
-          className="text-slate-500 hover:text-slate-200 text-lg leading-none"
+          className="text-slate-500 hover:text-slate-200 text-2xl leading-none flex-shrink-0 -mr-1 -mt-1 px-2 py-1 rounded hover:bg-slate-800"
           aria-label="Dismiss"
         >
           ×
