@@ -108,6 +108,8 @@ export function Dashboard(): JSX.Element {
 
   const isNewPlayer =
     data.inventoryHealth.liveInventoryCount < 5 && data.rightNow.length === 0;
+  const noActiveSchematics = data.inventoryHealth.activeSchematicCount === 0;
+  const noSnapshot = data.snapshotFetchedAt === null;
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto">
@@ -137,16 +139,50 @@ export function Dashboard(): JSX.Element {
 
       {isNewPlayer && (
         <div className="mb-6 p-4 rounded-md border border-cyan-800 bg-cyan-950/30 text-cyan-200 text-sm">
-          <strong className="font-semibold">New character?</strong> You have no live
-          inventory and no CHASE resources to act on yet. Start with the{" "}
-          <Link to="/planner" className="underline hover:text-cyan-100">
-            harvester planner
-          </Link>{" "}
-          to pick your first 10 lots, or browse{" "}
-          <Link to="/resources" className="underline hover:text-cyan-100">
-            current resources
-          </Link>{" "}
-          for what's spawning right now.
+          <strong className="font-semibold block mb-2">
+            Welcome to GalaxyCrafter
+            {data.characterName ? `, ${data.characterName}` : ""}.
+          </strong>
+          <p className="mb-2 leading-relaxed">
+            Nothing's on this dashboard yet because the app doesn't know what you
+            craft, what you own, or what's currently spawning. Three quick steps:
+          </p>
+          <ol className="list-decimal list-inside space-y-1 mb-2 leading-relaxed">
+            {noActiveSchematics && (
+              <li>
+                <Link to="/schematics" className="underline hover:text-cyan-100">
+                  Browse Schematics
+                </Link>{" "}
+                and add the recipes you actually craft to your Active list.
+                Sub-components inherit automatically.
+              </li>
+            )}
+            {noSnapshot && (
+              <li>
+                <Link to="/resources" className="underline hover:text-cyan-100">
+                  Open Resources
+                </Link>{" "}
+                and click <strong>Refresh</strong> to pull SR2's current resource
+                snapshot from GalaxyHarvester.
+              </li>
+            )}
+            <li>
+              (Optional)
+              {" "}
+              <Link to="/inventory" className="underline hover:text-cyan-100">
+                List what you own
+              </Link>{" "}
+              on the Crates tab — verdicts will switch to "is this an upgrade over
+              what I have?" scoring once you do.
+            </li>
+            <li>
+              Brand-new character with 10 free lots? The{" "}
+              <Link to="/planner" className="underline hover:text-cyan-100">
+                Harvester Planner
+              </Link>{" "}
+              picks your first 10 deployments.
+            </li>
+          </ol>
         </div>
       )}
 

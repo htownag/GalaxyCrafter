@@ -1,7 +1,17 @@
 {
   "name": "galaxycrafter",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Personal-aware SWG resource collection assistant for Sentinels Republic 2",
+  "author": {
+    "name": "Ryan Atlee",
+    "url": "https://github.com/htownag"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/htownag/GalaxyCrafter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/htownag/GalaxyCrafter.git"
+  },
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -13,7 +23,9 @@
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke:ingest": "tsx scripts/smoke-ingest.ts"
+    "smoke:ingest": "tsx scripts/smoke-ingest.ts",
+    "build:win": "electron-vite build && electron-builder --win --x64",
+    "build:win:nopublish": "electron-vite build && electron-builder --win --x64 --publish=never"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",
