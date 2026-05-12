@@ -378,27 +378,97 @@ function InventoryHealthPanel({
           </div>
         </div>
 
-        <div>
-          <h4 className="text-xs font-medium text-slate-300 mb-2">
-            Top 5 closest to craftable
-          </h4>
-          {data.topSchematics.length === 0 && (
-            <p className="text-xs text-slate-500">
-              No active schematics with raw slots.{" "}
-              <Link
-                to="/schematics"
-                className="underline text-emerald-400 hover:text-emerald-300"
-              >
-                Add some
-              </Link>
-              .
-            </p>
-          )}
-          {data.topSchematics.map((s) => (
-            <SchematicReadinessRow key={s.schematicId} row={s} />
-          ))}
-        </div>
+        <SchematicReadinessList rows={data.topSchematics} />
       </div>
+    </div>
+  );
+}
+
+function SchematicReadinessList({
+  rows,
+}: {
+  rows: DashboardSchematicReadiness[];
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const [limit, setLimit] = useState(5);
+
+  const total = rows.length;
+  const shownRows = expanded ? rows.slice(0, limit) : rows.slice(0, 5);
+
+  // Step limits: 5 -> 10 -> 25 -> all. Stops cleanly at total.
+  function nextLimit(): number {
+    if (!expanded) return 10;
+    if (limit === 10 && total > 10) return 25;
+    if (limit === 25 && total > 25) return total;
+    return total;
+  }
+  function showMore(): void {
+    if (!expanded) {
+      setExpanded(true);
+      setLimit(10);
+    } else {
+      setLimit(nextLimit());
+    }
+  }
+  function collapse(): void {
+    setExpanded(false);
+    setLimit(5);
+  }
+
+  const hasMore = total > shownRows.length;
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <h4 className="text-xs font-medium text-slate-300">
+          {expanded
+            ? `Top ${shownRows.length} closest to craftable`
+            : "Top 5 closest to craftable"}
+        </h4>
+        <span className="text-[10px] text-slate-500">
+          {total} active schematic{total === 1 ? "" : "s"} with raw slots
+        </span>
+      </div>
+      {rows.length === 0 && (
+        <p className="text-xs text-slate-500">
+          No active schematics with raw slots.{" "}
+          <Link
+            to="/schematics"
+            className="underline text-emerald-400 hover:text-emerald-300"
+          >
+            Add some
+          </Link>
+          .
+        </p>
+      )}
+      {shownRows.map((s) => (
+        <SchematicReadinessRow key={s.schematicId} row={s} />
+      ))}
+      {(hasMore || expanded) && (
+        <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-800">
+          {hasMore && (
+            <button
+              type="button"
+              onClick={showMore}
+              className="px-2.5 py-1 rounded border border-slate-700 text-xs text-slate-300 hover:border-emerald-700 hover:text-emerald-300"
+            >
+              {!expanded && "Show 10"}
+              {expanded && limit === 10 && total > 10 && `Show 25`}
+              {expanded && limit === 25 && total > 25 && `Show all (${total})`}
+              {expanded && limit > 25 && limit < total && `Show all (${total})`}
+            </button>
+          )}
+          {expanded && (
+            <button
+              type="button"
+              onClick={collapse}
+              className="px-2.5 py-1 rounded border border-slate-700 text-xs text-slate-400 hover:border-slate-600 hover:text-slate-200"
+            >
+              Show top 5
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -2197,9 +2197,10 @@ export function registerDashboardHandler(): void {
       });
 
       const craftableCount = inventoryReadiness.filter((r) => r.craftableNow).length;
-      // Top schematics for the "what's close to ready" lens: sort by filled / total
-      // descending, then by schematic name. Drop schematics with zero raw slots
-      // (they're sub-components or non-craftable).
+      // "What's close to ready" lens: sort by filled / total ratio descending,
+      // then by schematic name. Drop schematics with zero raw slots (sub-components
+      // and non-craftables). Returns the FULL ranked list — the UI picks how many
+      // to render (default 5, expandable to all).
       const topSchematics = inventoryReadiness
         .filter((r) => r.totalSlots > 0)
         .sort((a, b) => {
@@ -2207,8 +2208,7 @@ export function registerDashboardHandler(): void {
           const ratioB = b.filledSlots / b.totalSlots;
           if (ratioA !== ratioB) return ratioB - ratioA;
           return a.schematicName.localeCompare(b.schematicName);
-        })
-        .slice(0, 5);
+        });
 
       const inventoryHealth: DashboardInventoryHealth = {
         activeSchematicCount: activeRows.length,
