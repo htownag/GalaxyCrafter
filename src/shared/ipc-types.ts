@@ -301,10 +301,19 @@ export interface SchematicDepNode {
   profession: string | null;
   /** Slot on the parent that this node fills. Null for the root. */
   parentSlotName: string | null;
-  /** ingredientType from the parent's slot — 0 = raw resource (this node will
-   *  be null for raw slots; sub-components are non-zero), 1 = specific,
-   *  3 = base-class, etc. */
+  /**
+   * Parent slot's `ingredientType` enum from Core3 (DraftSlot.h):
+   *   0 = RESOURCESLOT (raw resource)
+   *   1 = IDENTICALSLOT (required, exact derivation match)
+   *   2 = MIXEDSLOT (required, base-class match)
+   *   3 = OPTIONALIDENTICALSLOT (optional, exact derivation match)
+   *   4 = OPTIONALMIXEDSLOT (optional, base-class match)
+   * Null on the root node.
+   */
   parentIngredientType: number | null;
+  /** True iff parentIngredientType ∈ {3, 4} — the slot is optional (player can
+   *  craft without filling it; filling it grants enhancements). */
+  parentOptional: boolean;
   /** Distance from root. Root = 0. */
   depth: number;
   /** Children of THIS node (recursive). Empty when the node is a leaf, when
@@ -314,6 +323,17 @@ export interface SchematicDepNode {
   /** True iff this node was capped at maxDepth and has further children we
    *  didn't load. Lets the UI offer a "load deeper" affordance. */
   truncated: boolean;
+  /**
+   * Other schematics whose IFF derivation chain also fits the parent slot
+   * — i.e. substitutable producers. Most commonly this is the Advanced
+   * variant of the base sub-component. Listed inline (flat, not recursive)
+   * so the player sees the alternate exists without exploding the tree.
+   */
+  alternateProducers: Array<{
+    schematicId: string;
+    schematicName: string;
+    profession: string | null;
+  }>;
 }
 
 /**

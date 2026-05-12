@@ -1969,6 +1969,63 @@ export function registerDepTreeHandler(): void {
         slotsBySchematic.set(s.schematicId, arr);
       }
 
+      // Build a substitutable-producer index. For any slot's IFF lineage, we
+      // want to know every schematic that produces a fitting IFF — i.e. the
+      // base producer + any schematic whose parentObjectPath chains back to
+      // it. This is what surfaces "Advanced Blaster Power-handler" as an
+      // alternate alongside the base on the DH17 tree.
+      //
+      // We need ALL schematics for this index, not just visited ones, since
+      // an advanced variant has no schematic_dependencies edges of its own
+      // (Item 1 / cb677e8). Cheap — ~1700 rows.
+      const allSchemRows = db
+        .select({
+          id: schematics.id,
+          name: schematics.name,
+          skillGroup: schematics.skillGroup,
+          objectPath: schematics.objectPath,
+          parentObjectPath: schematics.parentObjectPath,
+        })
+        .from(schematics)
+        .all();
+      // Map from "produced IFF" → list of producers
+      const producersByIff = new Map<
+        string,
+        Array<{ schematicId: string; schematicName: string; profession: string | null }>
+      >();
+      function addProducer(iff: string, row: (typeof allSchemRows)[number]): void {
+        const arr = producersByIff.get(iff) ?? [];
+        arr.push({
+          schematicId: row.id,
+          schematicName: row.name,
+          profession: professionForSkillGroup(row.skillGroup),
+        });
+        producersByIff.set(iff, arr);
+      }
+      // First pass: each schematic registers as producing its own objectPath.
+      for (const row of allSchemRows) {
+        if (row.objectPath) addProducer(row.objectPath, row);
+      }
+      // Second pass: each schematic also registers as a producer for every
+      // ancestor IFF in its parentObjectPath chain. Walk parents up to 8
+      // levels (more than enough — real chains are 1-2 deep).
+      const objectPathToParent = new Map<string, string | null>();
+      for (const row of allSchemRows) {
+        if (row.objectPath) objectPathToParent.set(row.objectPath, row.parentObjectPath ?? null);
+      }
+      for (const row of allSchemRows) {
+        if (!row.objectPath) continue;
+        let ancestor = row.parentObjectPath;
+        let hops = 0;
+        const seen = new Set<string>();
+        while (ancestor && hops < 8 && !seen.has(ancestor)) {
+          seen.add(ancestor);
+          addProducer(ancestor, row);
+          ancestor = objectPathToParent.get(ancestor) ?? null;
+          hops++;
+        }
+      }
+
       // Map every slot.ingredientObject to a display name (mirrors what the
       // schematic-detail IPC already does, but reused here).
       const ingredientIds = Array.from(
@@ -2036,15 +2093,46 @@ export function registerDepTreeHandler(): void {
           }
         }
 
+        // Compute alternateProducers for THIS node — other schematics whose
+        // produced IFF derives from the parent slot's ingredientObject and
+        // therefore also fits the slot via IFF substitutability. Most common
+        // case: base sub-component → Advanced variant as the alternate.
+        const alternateProducers: SchematicDepNode["alternateProducers"] = [];
+        if (parentSlotName !== null) {
+          // Find the parent's slot row to get its ingredientObject (the IFF
+          // the slot wants). The parent is the ancestor at the immediately
+          // higher depth — find it via the ancestors set + slot lookup.
+          for (const parentId of ancestors) {
+            const slot = (slotsBySchematic.get(parentId) ?? []).find(
+              (sl) => sl.slotName === parentSlotName,
+            );
+            if (slot) {
+              const producers = producersByIff.get(slot.ingredientObject) ?? [];
+              for (const p of producers) {
+                if (p.schematicId === id) continue; // the primary, not an alternate
+                alternateProducers.push(p);
+              }
+              break;
+            }
+          }
+        }
+
+        // OPTIONAL slot flag derived from Core3 enum (DraftSlot.h):
+        //   3 = OPTIONALIDENTICALSLOT, 4 = OPTIONALMIXEDSLOT
+        const parentOptional =
+          parentIngredientType === 3 || parentIngredientType === 4;
+
         return {
           schematicId: id,
           schematicName: s?.name ?? id,
           profession: s ? professionForSkillGroup(s.skillGroup) : null,
           parentSlotName,
           parentIngredientType,
+          parentOptional,
           depth: currentDepth,
           children,
           truncated,
+          alternateProducers,
         };
       }
 

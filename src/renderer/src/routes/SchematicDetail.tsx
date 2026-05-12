@@ -9,11 +9,18 @@ import type {
 import { PROFESSIONS } from "@shared/professions";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
+// Per Core3 DraftSlot.h enum:
+//   0 = RESOURCESLOT
+//   1 = IDENTICALSLOT
+//   2 = MIXEDSLOT
+//   3 = OPTIONALIDENTICALSLOT
+//   4 = OPTIONALMIXEDSLOT
 const INGREDIENT_TYPE_LABEL: Record<number, string> = {
   0: "raw resource",
-  1: "specific component",
+  1: "identical component",
   2: "mixed component",
-  3: "base-class component",
+  3: "optional identical component",
+  4: "optional mixed component",
 };
 
 export function SchematicDetail(): JSX.Element {
@@ -354,10 +361,12 @@ interface DepTreeNodeProps {
   allRawSlots: Record<string, SchematicDepRawSlot[]>;
 }
 
+// Compact slot-type pill labels for the dep-tree node header.
 const INGREDIENT_KIND_LABEL: Record<number, string> = {
-  1: "specific",
+  1: "identical",
   2: "mixed",
-  3: "base-class",
+  3: "identical",
+  4: "mixed",
 };
 
 function DepTreeNode({ node, rawSlots, allRawSlots }: DepTreeNodeProps): JSX.Element {
@@ -369,6 +378,7 @@ function DepTreeNode({ node, rawSlots, allRawSlots }: DepTreeNodeProps): JSX.Ele
       : null;
   const hasChildren = node.children.length > 0 || node.truncated;
   const hasRawSlots = rawSlots.length > 0;
+  const hasAlternates = node.alternateProducers.length > 0;
 
   // Compact raw-slot summary: list of ingredient-display-name strings.
   const rawSlotSummary = rawSlots
@@ -397,6 +407,14 @@ function DepTreeNode({ node, rawSlots, allRawSlots }: DepTreeNodeProps): JSX.Ele
             [{node.parentSlotName}]
           </span>
         )}
+        {node.parentOptional && (
+          <span
+            className="px-1 py-0.5 rounded border border-amber-800 bg-amber-950/40 text-amber-300 text-[9px] font-medium leading-none"
+            title="Slot is optional — craft works without it; filling grants enhancements (often looted exotic components)."
+          >
+            OPTIONAL
+          </span>
+        )}
         <Link
           to={`/schematics/${node.schematicId}`}
           className="text-emerald-400 hover:text-emerald-300 text-sm"
@@ -409,7 +427,7 @@ function DepTreeNode({ node, rawSlots, allRawSlots }: DepTreeNodeProps): JSX.Ele
         {kindLabel && (
           <span
             className="text-[10px] text-slate-600 font-mono"
-            title={`Slot ingredient type: ${kindLabel}`}
+            title={`Slot type: ${kindLabel}${node.parentOptional ? " (optional)" : ""}`}
           >
             ({kindLabel})
           </span>
@@ -418,6 +436,23 @@ function DepTreeNode({ node, rawSlots, allRawSlots }: DepTreeNodeProps): JSX.Ele
           <span className="text-[10px] text-amber-400 font-mono">⋯ more</span>
         )}
       </div>
+      {hasAlternates && (
+        <div className="ml-6 mt-1 text-[11px] text-slate-500 leading-tight flex flex-wrap gap-x-2 gap-y-1">
+          <span className="text-slate-600">or:</span>
+          {node.alternateProducers.map((a) => (
+            <Link
+              key={a.schematicId}
+              to={`/schematics/${a.schematicId}`}
+              className="text-cyan-400 hover:text-cyan-300"
+              title={`Substitutable producer via IFF derivation${
+                a.profession ? ` · ${a.profession}` : ""
+              }`}
+            >
+              {a.schematicName}
+            </Link>
+          ))}
+        </div>
+      )}
       {hasRawSlots && open && (
         <div className="ml-6 mt-1 text-[11px] text-slate-500 leading-tight">
           {rawSlotSummary}
