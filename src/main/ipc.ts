@@ -97,6 +97,7 @@ import type {
   SimulatorSlotChoice,
   SimulatorSlotInfo,
   SimulatorSlotOption,
+  SnapshotIngestEvent,
   StatKey,
   VerdictThresholdsView,
 } from "../shared/ipc-types";
@@ -151,20 +152,33 @@ function formatInvSuffix(inventoryEntries: number, inventorySeededMatches: numbe
     : " · empty inventory (Phase 3 thresholds)";
 }
 
-function recomputeForGalaxy(galaxyId: number): void {
+interface GalaxyRecomputeStats {
+  totalChase: number;
+  totalMaybe: number;
+  charactersScored: number;
+}
+
+function recomputeForGalaxy(galaxyId: number): GalaxyRecomputeStats {
   const db = getDb();
   const chars = db.select().from(characters).where(eq(characters.galaxyId, galaxyId)).all();
+  let totalChase = 0;
+  let totalMaybe = 0;
+  let scored = 0;
   for (const c of chars) {
     try {
       const result = recomputeVerdicts(c.id);
       console.log(
         `[verdict] ${c.name} (galaxy ${galaxyId}): ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored${formatInvSuffix(result.inventoryEntries, result.inventorySeededMatches)} in ${result.durationMs}ms`,
       );
+      totalChase += result.chase;
+      totalMaybe += result.maybe;
+      scored++;
       emitVerdictsUpdated(c.id);
     } catch (e) {
       console.error(`[verdict] recompute failed for character ${c.id}:`, e);
     }
   }
+  return { totalChase, totalMaybe, charactersScored: scored };
 }
 
 /**
@@ -204,7 +218,26 @@ export function registerIpc(): void {
     }
     // Implicit verdict recompute: the new snapshot has fresh stat data
     // and may include new spawns; verdicts depend on both.
-    recomputeForGalaxy(galaxy.id);
+    const recomputeStats = recomputeForGalaxy(galaxy.id);
+
+    // Broadcast the live-update toast event to all renderer windows.
+    // Carries enough to render "N new spawns since last refresh, K CHASE-tier"
+    // without a follow-up query. Per design §5.1.
+    const ingestPayload: SnapshotIngestEvent = {
+      galaxyId: galaxy.id,
+      snapshotId: result.snapshot.id,
+      fetchedAt: result.snapshot.fetchedAt,
+      resourceCount: result.snapshot.resourceCount,
+      newResourceCount: result.newResourceCount,
+      despawnedResourceCount: result.despawnedResourceCount,
+      totalChase: recomputeStats.totalChase,
+      totalMaybe: recomputeStats.totalMaybe,
+      charactersScored: recomputeStats.charactersScored,
+    };
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send("snapshot:ingestComplete", ingestPayload);
+    }
+
     return result;
   });
 

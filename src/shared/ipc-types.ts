@@ -50,6 +50,30 @@ export interface SnapshotSummary {
   resourceCount: number;
 }
 
+/**
+ * Payload fired on the `snapshot:ingestComplete` channel after a refresh
+ * finishes (ingest + SB compute + verdict recompute across all characters
+ * on the galaxy). Renderers subscribe via `onSnapshotIngestComplete` to
+ * surface a non-disruptive toast — per design §5.1's "Live updates" line.
+ */
+export interface SnapshotIngestEvent {
+  galaxyId: number;
+  snapshotId: string;
+  fetchedAt: number;
+  /** Total currently-spawning resources on the new snapshot. */
+  resourceCount: number;
+  /** Resources we'd never seen before this snapshot. */
+  newResourceCount: number;
+  /** Resources that despawned on this snapshot vs the previous one. */
+  despawnedResourceCount: number;
+  /** Aggregate CHASE-tier count across every character on this galaxy. */
+  totalChase: number;
+  /** Aggregate MAYBE-tier count across every character. */
+  totalMaybe: number;
+  /** How many characters had their verdicts recomputed. */
+  charactersScored: number;
+}
+
 export interface RefreshResult {
   snapshot: SnapshotSummary;
   newResourceCount: number;
@@ -794,4 +818,10 @@ export interface IpcApi {
    * function — call it from useEffect cleanup.
    */
   onVerdictsUpdated(listener: (payload: { characterId: string }) => void): () => void;
+
+  /** Live snapshot-ingest toast. Fires once per `snapshot:refresh` after
+   * the ingest + SB compute + verdict recompute all complete. */
+  onSnapshotIngestComplete(
+    listener: (payload: SnapshotIngestEvent) => void,
+  ): () => void;
 }

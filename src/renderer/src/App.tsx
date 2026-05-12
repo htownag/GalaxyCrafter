@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import type { Character, SnapshotSummary } from "@shared/ipc-types";
+import type { Character, SnapshotIngestEvent, SnapshotSummary } from "@shared/ipc-types";
 import { ActiveCharacterContext } from "./hooks/useActiveCharacter";
 
 const TABS = [
@@ -34,6 +34,7 @@ function relativeAge(ts: number): string {
 export function App(): JSX.Element {
   const [activeCharacter, setActiveCharacter] = useState<Character | null>(null);
   const [latestSnapshot, setLatestSnapshot] = useState<SnapshotSummary | null>(null);
+  const [ingestToast, setIngestToast] = useState<SnapshotIngestEvent | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -53,6 +54,23 @@ export function App(): JSX.Element {
     void refreshActiveCharacter();
     void refreshSnapshotInfo();
   }, [refreshActiveCharacter, refreshSnapshotInfo]);
+
+  // Subscribe to the live snapshot-ingest event. Pop a non-disruptive toast
+  // ("N new spawns · K CHASE for you"), refresh the snapshot summary in the
+  // header. Toast auto-dismisses after 6s; click to dismiss sooner.
+  useEffect(() => {
+    const off = window.api.onSnapshotIngestComplete((payload) => {
+      setIngestToast(payload);
+      void refreshSnapshotInfo();
+    });
+    return off;
+  }, [refreshSnapshotInfo]);
+
+  useEffect(() => {
+    if (!ingestToast) return;
+    const t = setTimeout(() => setIngestToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [ingestToast]);
 
   return (
     <ActiveCharacterContext.Provider
@@ -107,7 +125,65 @@ export function App(): JSX.Element {
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>
+        {ingestToast && (
+          <IngestToast event={ingestToast} onDismiss={() => setIngestToast(null)} />
+        )}
       </div>
     </ActiveCharacterContext.Provider>
+  );
+}
+
+function IngestToast({
+  event,
+  onDismiss,
+}: {
+  event: SnapshotIngestEvent;
+  onDismiss: () => void;
+}): JSX.Element {
+  // Compose the headline from whatever's most interesting on this ingest.
+  // Order of priority: new CHASE-worthy resources > new spawns > despawns >
+  // generic "snapshot refreshed."
+  const parts: string[] = [];
+  if (event.newResourceCount > 0) {
+    parts.push(`${event.newResourceCount} new spawn${event.newResourceCount === 1 ? "" : "s"}`);
+  }
+  if (event.despawnedResourceCount > 0) {
+    parts.push(
+      `${event.despawnedResourceCount} despawned`,
+    );
+  }
+  const verdictLine =
+    event.charactersScored > 0
+      ? `${event.totalChase} CHASE · ${event.totalMaybe} MAYBE`
+      : null;
+
+  return (
+    <div
+      className="fixed bottom-4 right-4 z-50 max-w-sm rounded-md border border-emerald-700 bg-slate-900 shadow-lg shadow-emerald-950/50 p-3 text-sm animate-in fade-in"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-2">
+        <div className="flex-1">
+          <div className="text-emerald-300 font-medium leading-tight mb-0.5">
+            Snapshot refreshed
+          </div>
+          <div className="text-slate-300 text-xs">
+            {parts.length > 0 ? parts.join(" · ") : `${event.resourceCount} resources`}
+          </div>
+          {verdictLine && (
+            <div className="text-slate-500 text-xs mt-0.5">{verdictLine}</div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-slate-500 hover:text-slate-200 text-lg leading-none"
+          aria-label="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+    </div>
   );
 }

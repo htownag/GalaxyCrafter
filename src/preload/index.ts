@@ -72,6 +72,12 @@ const api: IpcApi = {
     ipcRenderer.on("verdicts:updated", wrapped);
     return () => ipcRenderer.removeListener("verdicts:updated", wrapped);
   },
+  onSnapshotIngestComplete: (listener) => {
+    const wrapped = (_evt: Electron.IpcRendererEvent, payload: unknown): void =>
+      listener(payload as Parameters<typeof listener>[0]);
+    ipcRenderer.on("snapshot:ingestComplete", wrapped);
+    return () => ipcRenderer.removeListener("snapshot:ingestComplete", wrapped);
+  },
 };
 
 contextBridge.exposeInMainWorld("api", api);
