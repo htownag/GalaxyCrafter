@@ -15,15 +15,27 @@ directories:
 # - reference-data/  — loaded at startup via `app.getAppPath()` (resource
 #                      types, schematics, harvester catalogue, etc.)
 # - drizzle/migrations/ — applied at first boot by drizzle-orm
+# - node_modules/**  — production deps. better-sqlite3 (native binding),
+#                      drizzle-orm, fast-xml-parser, react, etc. electron-
+#                      builder auto-prunes devDependencies via its own
+#                      dep-walk, but we DO need to opt into the bundle —
+#                      omitting node_modules entirely (as the prior config
+#                      did) drops better-sqlite3 and the app boots into a
+#                      no-DB crash with no visible window. v0.1.0 shipped
+#                      with this bug; fixed in v0.1.1.
 files:
   - out/**
   - package.json
   - reference-data/**
   - drizzle/migrations/**
+  - node_modules/**
   - "!**/*.map"
   - "!**/*.d.ts"
   - "!**/*.test.*"
   - "!**/.DS_Store"
+  - "!**/node_modules/*/{README.md,readme.md,README,readme,CHANGELOG.md,changelog.md,HISTORY.md,.github,.vscode,test,tests,docs,example,examples,__tests__,*.markdown}"
+  - "!**/node_modules/**/*.{ts,map,d.ts}"
+  - "!**/node_modules/**/{tsconfig.json,.eslintrc*,.prettierrc*,.npmignore,.gitignore,.travis.yml,appveyor.yml}"
 
 # better-sqlite3 ships a native .node binding that can't run from inside an
 # asar archive — Electron has to load it from the filesystem. Unpacking it
@@ -33,10 +45,13 @@ asarUnpack:
   - "node_modules/bindings/**"
   - "node_modules/file-uri-to-path/**"
 
-# Don't try to rebuild dependencies during packaging — pnpm already produced
-# the right binaries during `pnpm install`. electron-builder's default
-# behaviour with pnpm + workspaces is finicky; we control it ourselves.
-npmRebuild: false
+# Rebuild native dependencies (better-sqlite3 etc) against Electron's Node ABI
+# during packaging. pnpm install builds bindings against the system Node
+# (NODE_MODULE_VERSION 127 for Node 22), but Electron 33 ships its own
+# Node fork at NODE_MODULE_VERSION 130. Without this rebuild, the packaged
+# app throws "compiled against a different Node.js version" at startup.
+# Discovered + fixed in v0.1.1 after v0.1.0 shipped with the wrong binding.
+npmRebuild: true
 
 win:
   target:
