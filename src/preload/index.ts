@@ -54,6 +54,10 @@ const api: IpcApi = {
   // Phase 9 — Dashboard
   fetchDashboard: (characterId) => ipcRenderer.invoke("dashboard:fetch", characterId),
 
+  // Phase 9b — Schematic dependency tree
+  getSchematicDepTree: (schematicId, maxDepth) =>
+    ipcRenderer.invoke("schematics:depTree", schematicId, maxDepth),
+
   // Phase 4E — GH single-resource lookup
   lookupGhResource: (input) => ipcRenderer.invoke("gh:lookupResource", input),
   onVerdictsUpdated: (listener) => {

@@ -262,6 +262,60 @@ export interface FinderResult {
   rows: FinderResultRow[];
 }
 
+// === Phase 9b: Schematic dependency tree ===
+
+/**
+ * One node in a recursive schematic dependency tree. A node represents either
+ * the root schematic or a sub-component schematic that fills a slot on its
+ * parent.
+ */
+export interface SchematicDepNode {
+  schematicId: string;
+  schematicName: string;
+  profession: string | null;
+  /** Slot on the parent that this node fills. Null for the root. */
+  parentSlotName: string | null;
+  /** ingredientType from the parent's slot — 0 = raw resource (this node will
+   *  be null for raw slots; sub-components are non-zero), 1 = specific,
+   *  3 = base-class, etc. */
+  parentIngredientType: number | null;
+  /** Distance from root. Root = 0. */
+  depth: number;
+  /** Children of THIS node (recursive). Empty when the node is a leaf, when
+   *  depth >= maxDepth, or when a cycle was detected (we never recurse into
+   *  an ancestor). */
+  children: SchematicDepNode[];
+  /** True iff this node was capped at maxDepth and has further children we
+   *  didn't load. Lets the UI offer a "load deeper" affordance. */
+  truncated: boolean;
+}
+
+/**
+ * Raw slot info attached at the level of any node so the UI can show
+ * "this schematic also wants 12 units of `metal_ferrous`" alongside the
+ * sub-component branches.
+ */
+export interface SchematicDepRawSlot {
+  slotName: string;
+  ingredientObject: string;
+  unitsRequired: number;
+  /** Human-friendly label if the slot's ingredient resolves to a known
+   *  resource group / type / IFF. Same resolution as SchematicDetail uses. */
+  displayName: string | null;
+}
+
+export interface SchematicDepTreeResult {
+  /** Echoes the requested root for round-trip safety. */
+  rootId: string;
+  /** Max recursion depth used for this fetch (default 4). */
+  maxDepth: number;
+  /** Full tree. */
+  root: SchematicDepNode;
+  /** Per-node raw-resource slots, keyed by schematicId. The same schematic
+   *  appearing multiple times in the tree shares its raw-slot list. */
+  rawSlotsBySchematic: Record<string, SchematicDepRawSlot[]>;
+}
+
 // === Phase 9: Dashboard ===
 //
 // One landing screen pulling Verdict + SB + Inventory into a single home view.
@@ -675,6 +729,9 @@ export interface IpcApi {
 
   // Phase 9 — Dashboard
   fetchDashboard(characterId: string): Promise<DashboardData | null>;
+
+  // Phase 9b — Schematic dependency tree
+  getSchematicDepTree(schematicId: string, maxDepth?: number): Promise<SchematicDepTreeResult | null>;
 
   // Phase 4E — GH single-resource lookup
   lookupGhResource(input: GhLookupInput): Promise<GhLookupResponse>;

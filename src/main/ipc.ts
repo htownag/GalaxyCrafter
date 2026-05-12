@@ -85,6 +85,9 @@ import type {
   PlannerInput,
   PlannerRecommendation,
   PlannerResult,
+  SchematicDepNode,
+  SchematicDepRawSlot,
+  SchematicDepTreeResult,
   SimulatorPredictInput,
   SimulatorPredictResult,
   SimulatorSlotChoice,
@@ -1871,6 +1874,9 @@ export function registerIpc(): void {
   // Wire Phase 9 dashboard handler — single aggregator IPC that pulls
   // verdicts + SB flags + inventory + active schematics into one payload.
   registerDashboardHandler();
+
+  // Wire Phase 9b dependency-tree handler.
+  registerDepTreeHandler();
 }
 
 function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResult {
@@ -1888,6 +1894,177 @@ function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResu
 // Re-exports so external callers can use these without reaching into core/planner.
 export { HARVESTERS };
 export type { PlannerBucket, PlannerSize };
+
+// === Phase 9b: Schematic dependency tree ===
+
+const DEFAULT_DEP_MAX_DEPTH = 4;
+
+export function registerDepTreeHandler(): void {
+  ipcMain.handle(
+    "schematics:depTree",
+    async (
+      _evt,
+      schematicId: string,
+      maxDepth?: number,
+    ): Promise<SchematicDepTreeResult | null> => {
+      const db = getDb();
+      const depth = Math.max(1, Math.min(8, maxDepth ?? DEFAULT_DEP_MAX_DEPTH));
+
+      const root = db.select().from(schematics).where(eq(schematics.id, schematicId)).get();
+      if (!root) return null;
+
+      // Pre-load every dependency edge we might visit. We don't know which
+      // until we walk, so iterate in waves: start with root, fetch its deps,
+      // queue children, fetch their deps, repeat. A single bulk lookup per
+      // wave keeps round-trips small.
+      const depsByParent = new Map<string, Array<{ childId: string; slotName: string }>>();
+      const visitedSchematics = new Set<string>([schematicId]);
+      let frontier = [schematicId];
+      for (let level = 0; level < depth && frontier.length > 0; level++) {
+        const unknown = frontier.filter((id) => !depsByParent.has(id));
+        if (unknown.length === 0) break;
+        const edges = db
+          .select()
+          .from(schematicDependencies)
+          .where(inArray(schematicDependencies.parentSchematicId, unknown))
+          .all();
+        for (const id of unknown) depsByParent.set(id, []);
+        for (const e of edges) {
+          const arr = depsByParent.get(e.parentSchematicId) ?? [];
+          arr.push({ childId: e.childSchematicId, slotName: e.slotName });
+          depsByParent.set(e.parentSchematicId, arr);
+        }
+        // Next frontier = children we haven't seen.
+        const nextFrontier: string[] = [];
+        for (const e of edges) {
+          if (!visitedSchematics.has(e.childSchematicId)) {
+            visitedSchematics.add(e.childSchematicId);
+            nextFrontier.push(e.childSchematicId);
+          }
+        }
+        frontier = nextFrontier;
+      }
+
+      // Bulk-load schematic rows + slot rows for every node we'll render.
+      const allIds = Array.from(visitedSchematics);
+      const schemRows = db.select().from(schematics).where(inArray(schematics.id, allIds)).all();
+      const schemById = new Map(schemRows.map((s) => [s.id, s]));
+      const slotRows = db
+        .select()
+        .from(schematicSlots)
+        .where(inArray(schematicSlots.schematicId, allIds))
+        .all();
+      const slotsBySchematic = new Map<string, typeof slotRows>();
+      for (const s of slotRows) {
+        const arr = slotsBySchematic.get(s.schematicId) ?? [];
+        arr.push(s);
+        slotsBySchematic.set(s.schematicId, arr);
+      }
+
+      // Map every slot.ingredientObject to a display name (mirrors what the
+      // schematic-detail IPC already does, but reused here).
+      const ingredientIds = Array.from(
+        new Set(slotRows.filter((s) => s.ingredientType === 0).map((s) => s.ingredientObject)),
+      );
+      const ingredientDisplayNames = new Map<string, string>();
+      if (ingredientIds.length > 0) {
+        const groupHits = db
+          .select()
+          .from(resourceGroups)
+          .where(inArray(resourceGroups.id, ingredientIds))
+          .all();
+        for (const g of groupHits) ingredientDisplayNames.set(g.id, g.name);
+        const remaining = ingredientIds.filter((i) => !ingredientDisplayNames.has(i));
+        if (remaining.length > 0) {
+          const typeHits = db
+            .select()
+            .from(resourceTypes)
+            .where(inArray(resourceTypes.id, remaining))
+            .all();
+          for (const t of typeHits) ingredientDisplayNames.set(t.id, t.name);
+        }
+      }
+
+      // Index parent-slot ingredient types so each tree node knows which
+      // slot it fills + the slot's ingredientType (1 / 3 / etc.).
+      function parentSlotInfoFor(
+        parentId: string,
+        slotName: string,
+      ): { ingredientType: number | null } {
+        const slot = (slotsBySchematic.get(parentId) ?? []).find(
+          (s) => s.slotName === slotName,
+        );
+        return { ingredientType: slot?.ingredientType ?? null };
+      }
+
+      // Recurse to build the tree. Ancestor set prevents cycles. Depth
+      // counter caps recursion at the configured limit.
+      function buildNode(
+        id: string,
+        parentSlotName: string | null,
+        parentIngredientType: number | null,
+        currentDepth: number,
+        ancestors: Set<string>,
+      ): SchematicDepNode {
+        const s = schemById.get(id);
+        const deps = depsByParent.get(id) ?? [];
+        const canRecurse = currentDepth < depth;
+        const children: SchematicDepNode[] = [];
+        let truncated = false;
+
+        if (deps.length > 0) {
+          if (canRecurse) {
+            const nextAncestors = new Set(ancestors);
+            nextAncestors.add(id);
+            for (const d of deps) {
+              if (nextAncestors.has(d.childId)) continue; // cycle guard
+              const info = parentSlotInfoFor(id, d.slotName);
+              children.push(
+                buildNode(d.childId, d.slotName, info.ingredientType, currentDepth + 1, nextAncestors),
+              );
+            }
+          } else {
+            truncated = true;
+          }
+        }
+
+        return {
+          schematicId: id,
+          schematicName: s?.name ?? id,
+          profession: s ? professionForSkillGroup(s.skillGroup) : null,
+          parentSlotName,
+          parentIngredientType,
+          depth: currentDepth,
+          children,
+          truncated,
+        };
+      }
+
+      const rootNode = buildNode(schematicId, null, null, 0, new Set());
+
+      // Raw-slot info per schematic id that appears in the tree.
+      const rawSlotsBySchematic: Record<string, SchematicDepRawSlot[]> = {};
+      for (const id of allIds) {
+        const slots = (slotsBySchematic.get(id) ?? []).filter((s) => s.ingredientType === 0);
+        rawSlotsBySchematic[id] = slots.map(
+          (s): SchematicDepRawSlot => ({
+            slotName: s.slotName,
+            ingredientObject: s.ingredientObject,
+            unitsRequired: s.unitsRequired,
+            displayName: ingredientDisplayNames.get(s.ingredientObject) ?? null,
+          }),
+        );
+      }
+
+      return {
+        rootId: schematicId,
+        maxDepth: depth,
+        root: rootNode,
+        rawSlotsBySchematic,
+      };
+    },
+  );
+}
 
 // === Phase 9: Dashboard aggregator ===
 

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { SchematicDetail as SchematicDetailType } from "@shared/ipc-types";
+import type {
+  SchematicDepNode,
+  SchematicDepRawSlot,
+  SchematicDepTreeResult,
+  SchematicDetail as SchematicDetailType,
+} from "@shared/ipc-types";
 import { PROFESSIONS } from "@shared/professions";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
@@ -253,45 +258,183 @@ export function SchematicDetail(): JSX.Element {
         </div>
       </section>
 
-      {detail.dependencies.length > 0 && (
+      {detail.dependencies.length > 0 && id && (
         <section className="mb-8">
-          <h3 className="text-sm font-medium text-slate-300 mb-2">
-            Sub-component schematics ({detail.dependencies.length})
-          </h3>
-          <p className="text-xs text-slate-400 mb-2">
-            These schematics produce components this schematic consumes as input. When you add this
-            schematic with sub-components, they're added as inherited entries.
-          </p>
-          <div className="overflow-x-auto rounded-md border border-slate-700">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-800 text-slate-300">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Slot</th>
-                  <th className="px-3 py-2 text-left font-medium">Sub-component schematic</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.dependencies.map((d) => (
-                  <tr key={`${d.slotName}-${d.childSchematicId}`} className="border-t border-slate-700">
-                    <td className="px-3 py-2 text-slate-400 font-mono text-xs">{d.slotName}</td>
-                    <td className="px-3 py-2">
-                      <Link
-                        to={`/schematics/${d.childSchematicId}`}
-                        className="text-emerald-400 hover:text-emerald-300"
-                      >
-                        {d.childName}
-                      </Link>
-                      <span className="ml-2 text-xs text-slate-600 font-mono">
-                        {d.childSchematicId}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DepTreeSection schematicId={id} initialDepCount={detail.dependencies.length} />
         </section>
       )}
     </div>
+  );
+}
+
+interface DepTreeSectionProps {
+  schematicId: string;
+  initialDepCount: number;
+}
+
+function DepTreeSection({ schematicId, initialDepCount }: DepTreeSectionProps): JSX.Element {
+  const [tree, setTree] = useState<SchematicDepTreeResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [maxDepth, setMaxDepth] = useState(4);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    window.api.getSchematicDepTree(schematicId, maxDepth).then((r) => {
+      if (cancelled) return;
+      setTree(r);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [schematicId, maxDepth]);
+
+  function nodeCount(node: SchematicDepNode): number {
+    return 1 + node.children.reduce((s, c) => s + nodeCount(c), 0);
+  }
+  const totalNodes = tree ? nodeCount(tree.root) - 1 : initialDepCount;
+
+  return (
+    <>
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-sm font-medium text-slate-300">
+          Dependency tree ({totalNodes} sub-component{totalNodes === 1 ? "" : "s"})
+        </h3>
+        <div className="flex items-center gap-2 text-xs">
+          <label className="text-slate-500">Depth</label>
+          <select
+            value={maxDepth}
+            onChange={(e) => setMaxDepth(Number(e.target.value))}
+            className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-200"
+          >
+            <option value={1}>1 (direct only)</option>
+            <option value={2}>2</option>
+            <option value={3}>3</option>
+            <option value={4}>4</option>
+            <option value={6}>6</option>
+            <option value={8}>8 (max)</option>
+          </select>
+        </div>
+      </div>
+      <p className="text-xs text-slate-400 mb-3">
+        Every sub-component this schematic transitively consumes. Each node shows the slot it
+        fills and the producing schematic. Hover a row for the raw-resource ingredients that
+        schematic also needs. Cycles are skipped; deeper branches than the selected depth get a{" "}
+        <span className="text-amber-400">⋯ more</span> marker.
+      </p>
+      {loading && !tree && <p className="text-slate-500 text-sm">Loading tree…</p>}
+      {tree && (
+        <div className="rounded-md border border-slate-700 bg-slate-900 p-3">
+          {tree.root.children.length === 0 ? (
+            <p className="text-xs text-slate-500">
+              This schematic has no sub-component dependencies.
+            </p>
+          ) : (
+            <ul className="text-sm">
+              {tree.root.children.map((child) => (
+                <DepTreeNode
+                  key={`${child.schematicId}-${child.parentSlotName}`}
+                  node={child}
+                  rawSlots={tree.rawSlotsBySchematic[child.schematicId] ?? []}
+                  allRawSlots={tree.rawSlotsBySchematic}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+interface DepTreeNodeProps {
+  node: SchematicDepNode;
+  rawSlots: SchematicDepRawSlot[];
+  allRawSlots: Record<string, SchematicDepRawSlot[]>;
+}
+
+const INGREDIENT_KIND_LABEL: Record<number, string> = {
+  1: "specific",
+  2: "mixed",
+  3: "base-class",
+};
+
+function DepTreeNode({ node, rawSlots, allRawSlots }: DepTreeNodeProps): JSX.Element {
+  const [open, setOpen] = useState(node.depth <= 1);
+  const profession = PROFESSIONS.find((p) => p.id === node.profession);
+  const kindLabel =
+    node.parentIngredientType !== null
+      ? INGREDIENT_KIND_LABEL[node.parentIngredientType] ?? null
+      : null;
+  const hasChildren = node.children.length > 0 || node.truncated;
+  const hasRawSlots = rawSlots.length > 0;
+
+  // Compact raw-slot summary: list of ingredient-display-name strings.
+  const rawSlotSummary = rawSlots
+    .map((s) => `${s.unitsRequired}u ${s.displayName ?? s.ingredientObject}`)
+    .join(" · ");
+
+  return (
+    <li
+      className="border-l border-slate-700 pl-3 py-1 my-0.5"
+      style={{ marginLeft: `${(node.depth - 1) * 8}px` }}
+    >
+      <div className="flex items-baseline gap-2 flex-wrap">
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="text-slate-500 hover:text-slate-200 font-mono text-xs w-3"
+          >
+            {open ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span className="text-slate-700 font-mono text-xs w-3">·</span>
+        )}
+        {node.parentSlotName && (
+          <span className="text-[10px] font-mono text-slate-500" title={node.parentSlotName}>
+            [{node.parentSlotName}]
+          </span>
+        )}
+        <Link
+          to={`/schematics/${node.schematicId}`}
+          className="text-emerald-400 hover:text-emerald-300 text-sm"
+        >
+          {node.schematicName}
+        </Link>
+        {profession && (
+          <span className="text-[10px] text-slate-500">· {profession.name}</span>
+        )}
+        {kindLabel && (
+          <span
+            className="text-[10px] text-slate-600 font-mono"
+            title={`Slot ingredient type: ${kindLabel}`}
+          >
+            ({kindLabel})
+          </span>
+        )}
+        {node.truncated && (
+          <span className="text-[10px] text-amber-400 font-mono">⋯ more</span>
+        )}
+      </div>
+      {hasRawSlots && open && (
+        <div className="ml-6 mt-1 text-[11px] text-slate-500 leading-tight">
+          {rawSlotSummary}
+        </div>
+      )}
+      {open && node.children.length > 0 && (
+        <ul className="mt-1">
+          {node.children.map((c) => (
+            <DepTreeNode
+              key={`${c.schematicId}-${c.parentSlotName}-${c.depth}`}
+              node={c}
+              rawSlots={allRawSlots[c.schematicId] ?? []}
+              allRawSlots={allRawSlots}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
