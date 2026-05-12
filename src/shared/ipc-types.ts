@@ -262,6 +262,82 @@ export interface FinderResult {
   rows: FinderResultRow[];
 }
 
+// === Phase 9: Dashboard ===
+//
+// One landing screen pulling Verdict + SB + Inventory into a single home view.
+// Per the design's §5.1 "killer organizing screen" framing — replaces the
+// Resources tab as the app's default landing page.
+
+/** A resource card on Right Now / On Watch lanes — verdict-driven. */
+export interface DashboardVerdictCard {
+  resourceId: string;
+  resourceName: string;
+  typeDisplayName: string;
+  planets: string[];
+  /** Top 2 stats by raw value, name + value. */
+  topStats: Array<{ stat: StatKey; value: number }>;
+  tier: VerdictTier;
+  topScore: number;
+  reason: string;
+  /** Number of schematics this resource scored CHASE/MAYBE/SKIP for. */
+  matchedSchematicCount: number;
+  /** True if the resource appears in this character's inventory (any status). */
+  owned: boolean;
+}
+
+/** SB Collection lane entry. */
+export interface DashboardSbCard {
+  resourceId: string;
+  resourceName: string;
+  typeDisplayName: string;
+  planets: string[];
+  topStats: Array<{ stat: StatKey; value: number }>;
+  forProfession: string;
+  /** Whether this is the character's primary, secondary, or other profession. */
+  professionTier: "primary" | "secondary" | "other";
+  sbTier: SbTier;
+  score: number;
+  topScoreOnSnapshot: number;
+  schematicId: string | null;
+  owned: boolean;
+}
+
+/** One active schematic's slot-readiness for the inventory-health lane. */
+export interface DashboardSchematicReadiness {
+  schematicId: string;
+  schematicName: string;
+  profession: string | null;
+  /** True iff every raw slot has at least one fitting inventory resource (live status). */
+  craftableNow: boolean;
+  totalSlots: number;
+  filledSlots: number;
+  /** Slot names with no matching live inventory resource. */
+  missingSlots: Array<{ slotName: string; ingredientObject: string; unitsRequired: number }>;
+}
+
+export interface DashboardInventoryHealth {
+  activeSchematicCount: number;
+  craftableNow: number;
+  /** Live-inventory resource count for the character. */
+  liveInventoryCount: number;
+  /** Top N schematics by readiness (most-craftable first), with missing-slot detail. */
+  topSchematics: DashboardSchematicReadiness[];
+}
+
+export interface DashboardData {
+  characterName: string;
+  galaxyId: number;
+  /** Top 5 CHASE-tier resources, score-desc. */
+  rightNow: DashboardVerdictCard[];
+  /** Top 10 MAYBE-tier resources, score-desc. */
+  onWatch: DashboardVerdictCard[];
+  /** SB flags for character's primary + secondary profs, weighted, top 10. */
+  sbCollection: DashboardSbCard[];
+  inventoryHealth: DashboardInventoryHealth;
+  /** Time the source snapshot was fetched, for "as of N min ago" display. */
+  snapshotFetchedAt: number | null;
+}
+
 // === Phase 6: Crafting simulator ===
 
 export interface SimulatorSkillProfile {
@@ -596,6 +672,9 @@ export interface IpcApi {
 
   // Phase 6 — Crafting simulator
   predictManufacture(input: SimulatorPredictInput): Promise<SimulatorPredictResult | null>;
+
+  // Phase 9 — Dashboard
+  fetchDashboard(characterId: string): Promise<DashboardData | null>;
 
   // Phase 4E — GH single-resource lookup
   lookupGhResource(input: GhLookupInput): Promise<GhLookupResponse>;

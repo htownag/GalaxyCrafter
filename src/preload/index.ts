@@ -51,6 +51,9 @@ const api: IpcApi = {
   // Phase 6 — Crafting simulator
   predictManufacture: (input) => ipcRenderer.invoke("simulator:predict", input),
 
+  // Phase 9 — Dashboard
+  fetchDashboard: (characterId) => ipcRenderer.invoke("dashboard:fetch", characterId),
+
   // Phase 4E — GH single-resource lookup
   lookupGhResource: (input) => ipcRenderer.invoke("gh:lookupResource", input),
   onVerdictsUpdated: (listener) => {

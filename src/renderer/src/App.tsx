@@ -4,6 +4,7 @@ import type { Character, SnapshotSummary } from "@shared/ipc-types";
 import { ActiveCharacterContext } from "./hooks/useActiveCharacter";
 
 const TABS = [
+  { to: "/dashboard", label: "Dashboard" },
   { to: "/resources", label: "Resources" },
   { to: "/schematics", label: "Schematics" },
   { to: "/active", label: "Active" },

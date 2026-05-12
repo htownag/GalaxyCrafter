@@ -6,6 +6,7 @@ import { ActiveSchematics } from "./routes/ActiveSchematics";
 import { Character } from "./routes/Character";
 import { Finder } from "./routes/Finder";
 import { Inventory } from "./routes/Inventory";
+import { Dashboard } from "./routes/Dashboard";
 import { Planner } from "./routes/Planner";
 // Simulator route shelved 2026-05-11 — see App.tsx note.
 // import { Simulator } from "./routes/Simulator";
@@ -20,7 +21,8 @@ const router = createHashRouter([
     path: "/",
     element: <App />,
     children: [
-      { index: true, element: <Resources /> },
+      { index: true, element: <Dashboard /> },
+      { path: "dashboard", element: <Dashboard /> },
       { path: "resources", element: <Resources /> },
       { path: "resources/:id", element: <ResourceDetail /> },
       { path: "schematics", element: <Schematics /> },

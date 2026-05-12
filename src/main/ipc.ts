@@ -77,6 +77,11 @@ import {
   type SlotFill,
 } from "../core/simulator/types";
 import type {
+  DashboardData,
+  DashboardInventoryHealth,
+  DashboardSbCard,
+  DashboardSchematicReadiness,
+  DashboardVerdictCard,
   PlannerInput,
   PlannerRecommendation,
   PlannerResult,
@@ -1862,6 +1867,10 @@ export function registerIpc(): void {
   // Wire Phase 6 simulator handlers (kept in a separate function for
   // readability; this is the canonical mount point).
   registerSimulatorHandlers();
+
+  // Wire Phase 9 dashboard handler — single aggregator IPC that pulls
+  // verdicts + SB flags + inventory + active schematics into one payload.
+  registerDashboardHandler();
 }
 
 function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResult {
@@ -1879,6 +1888,347 @@ function emptyPlannerResult(primary: string[], secondary: string[]): PlannerResu
 // Re-exports so external callers can use these without reaching into core/planner.
 export { HARVESTERS };
 export type { PlannerBucket, PlannerSize };
+
+// === Phase 9: Dashboard aggregator ===
+
+/** Pluck the top 2 numeric stats off a resource row, name + value. */
+function topStatsOf(r: {
+  oq: number | null;
+  cr: number | null;
+  cd: number | null;
+  dr: number | null;
+  fl: number | null;
+  hr: number | null;
+  ma: number | null;
+  pe: number | null;
+  sr: number | null;
+  ut: number | null;
+  er: number | null;
+}): Array<{ stat: StatKey; value: number }> {
+  const entries: Array<{ stat: StatKey; value: number }> = [];
+  const pairs: Array<[StatKey, number | null]> = [
+    ["OQ", r.oq],
+    ["CR", r.cr],
+    ["CD", r.cd],
+    ["DR", r.dr],
+    ["FL", r.fl],
+    ["HR", r.hr],
+    ["MA", r.ma],
+    ["PE", r.pe],
+    ["SR", r.sr],
+    ["UT", r.ut],
+    ["ER", r.er],
+  ];
+  for (const [key, val] of pairs) {
+    if (val !== null && val > 0) entries.push({ stat: key, value: val });
+  }
+  entries.sort((a, b) => b.value - a.value);
+  return entries.slice(0, 2);
+}
+
+export function registerDashboardHandler(): void {
+  ipcMain.handle(
+    "dashboard:fetch",
+    async (_evt, characterId: string): Promise<DashboardData | null> => {
+      const db = getDb();
+      const character = db
+        .select()
+        .from(characters)
+        .where(eq(characters.id, characterId))
+        .get();
+      if (!character) return null;
+
+      // Latest snapshot for this character's galaxy.
+      const latestSnapshot = db
+        .select()
+        .from(snapshots)
+        .where(eq(snapshots.galaxyId, character.galaxyId))
+        .orderBy(desc(snapshots.fetchedAt))
+        .limit(1)
+        .get();
+
+      // Profession priorities, partitioned.
+      const priorityRows = db
+        .select()
+        .from(professionPriorities)
+        .where(eq(professionPriorities.characterId, characterId))
+        .all();
+      const primaryProfs = new Set(
+        priorityRows.filter((p) => p.tier === "primary").map((p) => p.profession),
+      );
+      const secondaryProfs = new Set(
+        priorityRows.filter((p) => p.tier === "secondary").map((p) => p.profession),
+      );
+
+      // Verdicts — used by Right Now + On Watch.
+      const verdictRows = latestSnapshot
+        ? db
+            .select()
+            .from(verdicts)
+            .where(
+              and(
+                eq(verdicts.characterId, characterId),
+                eq(verdicts.snapshotId, latestSnapshot.id),
+              ),
+            )
+            .all()
+        : [];
+
+      const chase = verdictRows
+        .filter((v) => v.tier === "CHASE")
+        .sort((a, b) => b.topScore - a.topScore)
+        .slice(0, 5);
+      const maybe = verdictRows
+        .filter((v) => v.tier === "MAYBE")
+        .sort((a, b) => b.topScore - a.topScore)
+        .slice(0, 10);
+
+      // SB flags for character's primary/secondary professions on the
+      // latest snapshot, weighted (primary 1.0 / secondary 0.5) × tier mult
+      // (SB_TOP 1.0 / SB_NEAR 0.7) to produce a single sort score.
+      const sbRows = latestSnapshot
+        ? db
+            .select()
+            .from(sbFlags)
+            .where(eq(sbFlags.snapshotId, latestSnapshot.id))
+            .all()
+        : [];
+      const sbScored = sbRows
+        .map((f) => {
+          let profTier: "primary" | "secondary" | "other" = "other";
+          let profWeight = 0;
+          if (primaryProfs.has(f.forProfession)) {
+            profTier = "primary";
+            profWeight = 1.0;
+          } else if (secondaryProfs.has(f.forProfession)) {
+            profTier = "secondary";
+            profWeight = 0.5;
+          }
+          const tierMult = f.tier === "SB_TOP" ? 1.0 : 0.7;
+          const sortKey = profWeight === 0 ? 0 : f.score * tierMult * profWeight;
+          return { row: f, profTier, sortKey };
+        })
+        .filter((x) => x.sortKey > 0)
+        // Deduplicate per resource — keep the highest-scoring flag per resource.
+        .reduce((map, x) => {
+          const prev = map.get(x.row.resourceId);
+          if (!prev || x.sortKey > prev.sortKey) map.set(x.row.resourceId, x);
+          return map;
+        }, new Map<string, { row: typeof sbRows[number]; profTier: "primary" | "secondary" | "other"; sortKey: number }>());
+      const sbTop = Array.from(sbScored.values())
+        .sort((a, b) => b.sortKey - a.sortKey)
+        .slice(0, 10);
+
+      // Load the union of resources referenced by all three lanes + planets.
+      const cardResourceIds = Array.from(
+        new Set([
+          ...chase.map((v) => v.resourceId),
+          ...maybe.map((v) => v.resourceId),
+          ...sbTop.map((s) => s.row.resourceId),
+        ]),
+      );
+      const resourceRows =
+        cardResourceIds.length > 0
+          ? db.select().from(resources).where(inArray(resources.id, cardResourceIds)).all()
+          : [];
+      const resourceById = new Map(resourceRows.map((r) => [r.id, r]));
+
+      const typeIds = Array.from(new Set(resourceRows.map((r) => r.typeId)));
+      const typeRows =
+        typeIds.length > 0
+          ? db.select().from(resourceTypes).where(inArray(resourceTypes.id, typeIds)).all()
+          : [];
+      const typeNameById = new Map(typeRows.map((t) => [t.id, t.displayName]));
+
+      const planetRows =
+        cardResourceIds.length > 0
+          ? db
+              .select()
+              .from(resourcePlanets)
+              .where(inArray(resourcePlanets.resourceId, cardResourceIds))
+              .all()
+          : [];
+      const planetsByResource = new Map<string, string[]>();
+      for (const p of planetRows) {
+        const arr = planetsByResource.get(p.resourceId) ?? [];
+        arr.push(p.planet);
+        planetsByResource.set(p.resourceId, arr);
+      }
+
+      // Inventory ownership lookup (any status).
+      const invRowsAll = db
+        .select()
+        .from(inventoryEntries)
+        .where(eq(inventoryEntries.characterId, characterId))
+        .all();
+      const ownedSet = new Set(invRowsAll.map((r) => r.resourceId));
+      const liveInvIds = new Set(
+        invRowsAll.filter((r) => r.status === "live").map((r) => r.resourceId),
+      );
+
+      // Build card payloads.
+      const buildCard = (v: typeof verdictRows[number]): DashboardVerdictCard | null => {
+        const r = resourceById.get(v.resourceId);
+        if (!r) return null;
+        return {
+          resourceId: r.id,
+          resourceName: r.name,
+          typeDisplayName: typeNameById.get(r.typeId) ?? r.typeId,
+          planets: planetsByResource.get(r.id) ?? [],
+          topStats: topStatsOf(r),
+          tier: v.tier as DashboardVerdictCard["tier"],
+          topScore: v.topScore,
+          reason: v.reason ?? "",
+          matchedSchematicCount: v.matchedSchematicCount,
+          owned: ownedSet.has(r.id),
+        };
+      };
+
+      const rightNow = chase.map(buildCard).filter((c): c is DashboardVerdictCard => c !== null);
+      const onWatch = maybe.map(buildCard).filter((c): c is DashboardVerdictCard => c !== null);
+
+      const sbCollection: DashboardSbCard[] = sbTop
+        .map((x) => {
+          const r = resourceById.get(x.row.resourceId);
+          if (!r) return null;
+          return {
+            resourceId: r.id,
+            resourceName: r.name,
+            typeDisplayName: typeNameById.get(r.typeId) ?? r.typeId,
+            planets: planetsByResource.get(r.id) ?? [],
+            topStats: topStatsOf(r),
+            forProfession: x.row.forProfession,
+            professionTier: x.profTier,
+            sbTier: x.row.tier as DashboardSbCard["sbTier"],
+            score: x.row.score,
+            topScoreOnSnapshot: x.row.topScoreOnSnapshot,
+            schematicId: x.row.schematicId,
+            owned: ownedSet.has(r.id),
+          } satisfies DashboardSbCard;
+        })
+        .filter((c): c is DashboardSbCard => c !== null);
+
+      // === Inventory Health (Lane 4) ===
+      //
+      // For each active schematic, walk its raw resource slots. A slot is
+      // "filled" if ANY live inventory resource has a type that fits the
+      // slot's ingredientObject. Units-on-hand are NOT checked in v1 — that's
+      // a future refinement. Schematic is "craftableNow" when every raw slot
+      // is filled.
+      const activeRows = db
+        .select()
+        .from(activeSchematics)
+        .where(eq(activeSchematics.characterId, characterId))
+        .all();
+      const activeIds = activeRows.map((a) => a.schematicId);
+
+      const schemRowsForActive =
+        activeIds.length > 0
+          ? db.select().from(schematics).where(inArray(schematics.id, activeIds)).all()
+          : [];
+      const schemById = new Map(schemRowsForActive.map((s) => [s.id, s]));
+
+      const rawSlotRows =
+        activeIds.length > 0
+          ? db
+              .select()
+              .from(schematicSlots)
+              .where(
+                and(
+                  inArray(schematicSlots.schematicId, activeIds),
+                  eq(schematicSlots.ingredientType, 0),
+                ),
+              )
+              .all()
+          : [];
+      const slotsBySchematic = new Map<string, typeof rawSlotRows>();
+      for (const slot of rawSlotRows) {
+        const arr = slotsBySchematic.get(slot.schematicId) ?? [];
+        arr.push(slot);
+        slotsBySchematic.set(slot.schematicId, arr);
+      }
+
+      // Type ancestor map for live inventory resources only.
+      const liveInvResourceRows =
+        liveInvIds.size > 0
+          ? db
+              .select()
+              .from(resources)
+              .where(inArray(resources.id, Array.from(liveInvIds)))
+              .all()
+          : [];
+      const invTypeIds = Array.from(new Set(liveInvResourceRows.map((r) => r.typeId)));
+      const invTgEdges =
+        invTypeIds.length > 0
+          ? db
+              .select()
+              .from(resourceTypeGroups)
+              .where(inArray(resourceTypeGroups.typeId, invTypeIds))
+              .all()
+          : [];
+      const invTypeAncestors = buildTypeAncestorMap(invTgEdges);
+
+      const inventoryReadiness: DashboardSchematicReadiness[] = activeRows.map((ar) => {
+        const s = schemById.get(ar.schematicId);
+        const slots = slotsBySchematic.get(ar.schematicId) ?? [];
+        const missing: DashboardSchematicReadiness["missingSlots"] = [];
+        let filled = 0;
+        for (const slot of slots) {
+          const anyFits = liveInvResourceRows.some((r) =>
+            resourceTypeFitsRawSlot(r.typeId, slot.ingredientObject, invTypeAncestors),
+          );
+          if (anyFits) filled++;
+          else
+            missing.push({
+              slotName: slot.slotName,
+              ingredientObject: slot.ingredientObject,
+              unitsRequired: slot.unitsRequired,
+            });
+        }
+        return {
+          schematicId: ar.schematicId,
+          schematicName: s?.name ?? ar.schematicId,
+          profession: s ? professionForSkillGroup(s.skillGroup) : null,
+          craftableNow: slots.length > 0 && filled === slots.length,
+          totalSlots: slots.length,
+          filledSlots: filled,
+          missingSlots: missing,
+        };
+      });
+
+      const craftableCount = inventoryReadiness.filter((r) => r.craftableNow).length;
+      // Top schematics for the "what's close to ready" lens: sort by filled / total
+      // descending, then by schematic name. Drop schematics with zero raw slots
+      // (they're sub-components or non-craftable).
+      const topSchematics = inventoryReadiness
+        .filter((r) => r.totalSlots > 0)
+        .sort((a, b) => {
+          const ratioA = a.filledSlots / a.totalSlots;
+          const ratioB = b.filledSlots / b.totalSlots;
+          if (ratioA !== ratioB) return ratioB - ratioA;
+          return a.schematicName.localeCompare(b.schematicName);
+        })
+        .slice(0, 5);
+
+      const inventoryHealth: DashboardInventoryHealth = {
+        activeSchematicCount: activeRows.length,
+        craftableNow: craftableCount,
+        liveInventoryCount: liveInvIds.size,
+        topSchematics,
+      };
+
+      return {
+        characterName: character.name,
+        galaxyId: character.galaxyId,
+        rightNow,
+        onWatch,
+        sbCollection,
+        inventoryHealth,
+        snapshotFetchedAt: latestSnapshot?.fetchedAt ?? null,
+      };
+    },
+  );
+}
 
 // === Phase 6: Crafting simulator ===
 
