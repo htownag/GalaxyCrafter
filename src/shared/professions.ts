@@ -48,14 +48,46 @@ export const PROFESSIONS: ProfessionDef[] = [
   {
     id: "droid_engineer",
     name: "Droid Engineer",
-    skillGroupPrefixes: ["craftDroid"],
-    description: "Combat droids, utility droids, droid components.",
+    // Both casings — the GH dataset is inconsistent: some droid schematics
+    // use `craftDroid*` (capital), others use `craftdroid*` / `craftdroidgenmod*` /
+    // `craftdroiddefmod*` (lowercase). Without the lowercase prefixes ~70
+    // droid schematics fall through to profession=null and never get scored.
+    // Fixed 2026-05-13.
+    skillGroupPrefixes: ["craftDroid", "craftdroid"],
+    description: "Combat droids, utility droids, droid components, droid modules.",
   },
   {
     id: "bio_engineer",
     name: "Bio-Engineer",
-    skillGroupPrefixes: ["craftBio"],
-    description: "Creature enhancement, organic components.",
+    skillGroupPrefixes: ["craftBio", "craftTissue", "craftBasicTissue", "craftAdvancedTissue"],
+    description: "Creature enhancement, tissue grafts, organic components.",
+  },
+  {
+    id: "doctor",
+    name: "Doctor",
+    // Medic + Combat Medic schematics in NGE share the same crafting tree.
+    // Covers stimpacks, wound + state medpacks, area cures, and the offensive
+    // poison / disease delivery units Combat Medics build. medicineComponent
+    // groups produce the sub-component reagents.
+    skillGroupPrefixes: [
+      "craftMedicine",
+      "craftMedpack",
+      "craftStimpack",
+      "craftCureDisease",
+      "craftCurePoison",
+      "craftApplyPoison",
+      "craftApplyDisease",
+    ],
+    description: "Stimpacks, medpacks, wound + state cures, combat-medic delivery units.",
+  },
+  {
+    id: "jedi",
+    name: "Jedi",
+    // Lightsaber generations (1-4, one-hand / two-hand / polearm) + the
+    // crafting toolkit + refined crystal pack. SR2's Jedi village /
+    // padawan-tree schematics route through these prefixes.
+    skillGroupPrefixes: ["craftSaber", "craftJedi"],
+    description: "Lightsabers, lightsaber components, crystal refinement.",
   },
 ];
 
