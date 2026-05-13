@@ -3,6 +3,7 @@ import { BrowserWindow, app } from "electron";
 import { closeDb, openDb } from "../db";
 import { loadReferenceData } from "../db/reference-loader";
 import { registerIpc } from "./ipc";
+import { initAutoUpdater } from "./updater";
 
 function initDb(): void {
   const dbPath = path.join(app.getPath("userData"), "galaxycrafter.sqlite");
@@ -40,6 +41,7 @@ app.whenReady().then(() => {
   initDb();
   registerIpc();
   createWindow();
+  initAutoUpdater();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import type { Character, SnapshotIngestEvent, SnapshotSummary } from "@shared/ipc-types";
+import type {
+  Character,
+  SnapshotIngestEvent,
+  SnapshotSummary,
+  UpdateDownloadedEvent,
+} from "@shared/ipc-types";
 import { ActiveCharacterContext } from "./hooks/useActiveCharacter";
 
 const TABS = [
@@ -35,6 +40,7 @@ export function App(): JSX.Element {
   const [activeCharacter, setActiveCharacter] = useState<Character | null>(null);
   const [latestSnapshot, setLatestSnapshot] = useState<SnapshotSummary | null>(null);
   const [ingestToast, setIngestToast] = useState<SnapshotIngestEvent | null>(null);
+  const [updateToast, setUpdateToast] = useState<UpdateDownloadedEvent | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -71,6 +77,16 @@ export function App(): JSX.Element {
     const t = setTimeout(() => setIngestToast(null), 6000);
     return () => clearTimeout(t);
   }, [ingestToast]);
+
+  // Auto-updater download-complete toast. No auto-dismiss — this one waits
+  // for explicit Restart / Later input because applying the update is a
+  // material action (the app restarts).
+  useEffect(() => {
+    const off = window.api.onUpdateDownloaded((payload) => {
+      setUpdateToast(payload);
+    });
+    return off;
+  }, []);
 
   return (
     <ActiveCharacterContext.Provider
@@ -128,8 +144,79 @@ export function App(): JSX.Element {
         {ingestToast && (
           <IngestToast event={ingestToast} onDismiss={() => setIngestToast(null)} />
         )}
+        {updateToast && (
+          <UpdateToast event={updateToast} onDismiss={() => setUpdateToast(null)} />
+        )}
       </div>
     </ActiveCharacterContext.Provider>
+  );
+}
+
+function UpdateToast({
+  event,
+  onDismiss,
+}: {
+  event: UpdateDownloadedEvent;
+  onDismiss: () => void;
+}): JSX.Element {
+  const [busy, setBusy] = useState(false);
+
+  async function restartNow(): Promise<void> {
+    setBusy(true);
+    try {
+      await window.api.restartAndInstallUpdate();
+      // App will restart — no further UI work needed.
+    } catch (e) {
+      console.error("restart failed", e);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed bottom-6 right-6 z-50 w-96 max-w-[90vw] rounded-lg border border-cyan-700 bg-slate-900 shadow-xl shadow-cyan-950/60 p-5"
+      role="alertdialog"
+      aria-live="assertive"
+    >
+      <div className="flex items-start gap-3 mb-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-cyan-300 font-semibold text-lg leading-tight mb-1">
+            Update ready: v{event.version}
+          </div>
+          <div className="text-slate-300 text-sm leading-snug">
+            A newer GalaxyCrafter is downloaded and ready to install. Restart now to
+            apply, or it'll install automatically the next time you quit.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-slate-500 hover:text-slate-200 text-2xl leading-none flex-shrink-0 -mr-1 -mt-1 px-2 py-1 rounded hover:bg-slate-800"
+          aria-label="Dismiss"
+          disabled={busy}
+        >
+          ×
+        </button>
+      </div>
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={busy}
+          className="px-3 py-1.5 rounded-md border border-slate-700 text-slate-300 hover:border-slate-600 disabled:opacity-40 text-sm"
+        >
+          Later
+        </button>
+        <button
+          type="button"
+          onClick={restartNow}
+          disabled={busy}
+          className="px-3 py-1.5 rounded-md bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-sm font-medium"
+        >
+          {busy ? "Restarting…" : "Restart now"}
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -78,6 +78,14 @@ const api: IpcApi = {
     ipcRenderer.on("snapshot:ingestComplete", wrapped);
     return () => ipcRenderer.removeListener("snapshot:ingestComplete", wrapped);
   },
+  onUpdateDownloaded: (listener) => {
+    const wrapped = (_evt: Electron.IpcRendererEvent, payload: unknown): void =>
+      listener(payload as Parameters<typeof listener>[0]);
+    ipcRenderer.on("updater:downloaded", wrapped);
+    return () => ipcRenderer.removeListener("updater:downloaded", wrapped);
+  },
+  restartAndInstallUpdate: () => ipcRenderer.invoke("updater:restartAndInstall"),
+  checkForUpdates: () => ipcRenderer.invoke("updater:check"),
 };
 
 contextBridge.exposeInMainWorld("api", api);

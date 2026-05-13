@@ -51,6 +51,31 @@ export interface SnapshotSummary {
 }
 
 /**
+ * Fired by the auto-updater (main process) when a new release has been
+ * downloaded in the background and is ready to install on next restart.
+ * Renderer surfaces a non-disruptive toast offering Restart Now / Later.
+ */
+export interface UpdateDownloadedEvent {
+  version: string;
+  /** Release notes from the GitHub release body, if available. */
+  releaseNotes?: string;
+}
+
+/**
+ * Result of a manual `Check for updates` action from the Settings page.
+ *  - current: app is on the latest published release
+ *  - available: a newer release exists; updater will download it (or has)
+ *  - unavailable: updater returned no result (rare — usually means
+ *    the publish provider is misconfigured or unreachable)
+ *  - error: network / verification / etc. error; message details it
+ */
+export type UpdaterCheckResult =
+  | { status: "current"; version: string }
+  | { status: "available"; currentVersion: string; latestVersion: string }
+  | { status: "unavailable" }
+  | { status: "error"; message: string };
+
+/**
  * Payload fired on the `snapshot:ingestComplete` channel after a refresh
  * finishes (ingest + SB compute + verdict recompute across all characters
  * on the galaxy). Renderers subscribe via `onSnapshotIngestComplete` to
@@ -824,4 +849,12 @@ export interface IpcApi {
   onSnapshotIngestComplete(
     listener: (payload: SnapshotIngestEvent) => void,
   ): () => void;
+
+  /** Auto-update download-complete toast. Fires when electron-updater has
+   * pulled the new installer and is ready to apply on quit. */
+  onUpdateDownloaded(listener: (payload: UpdateDownloadedEvent) => void): () => void;
+  /** Quit the app and run the downloaded installer. */
+  restartAndInstallUpdate(): Promise<void>;
+  /** Manually trigger an update check (used by the Settings page button). */
+  checkForUpdates(): Promise<UpdaterCheckResult>;
 }

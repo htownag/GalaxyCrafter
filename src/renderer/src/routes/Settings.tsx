@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type {
   SettingsExportResult,
   SettingsSnapshot,
+  UpdaterCheckResult,
   VerdictThresholdsView,
 } from "@shared/ipc-types";
 
@@ -224,6 +225,16 @@ export function Settings(): JSX.Element {
         </button>
       </section>
 
+      <section className="mb-8">
+        <h3 className="text-sm font-medium text-slate-200 mb-2">Updates</h3>
+        <p className="text-xs text-slate-400 mb-3 leading-snug">
+          GalaxyCrafter checks for updates on launch and downloads them in the
+          background. A toast appears when an update is ready to install. Click
+          below to check manually.
+        </p>
+        <UpdateChecker />
+      </section>
+
       <section className="mb-2">
         <h3 className="text-sm font-medium text-slate-200 mb-2">Coming later</h3>
         <ul className="space-y-2 text-xs text-slate-500">
@@ -243,6 +254,59 @@ export function Settings(): JSX.Element {
           </li>
         </ul>
       </section>
+    </div>
+  );
+}
+
+function UpdateChecker(): JSX.Element {
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<UpdaterCheckResult | null>(null);
+
+  async function check(): Promise<void> {
+    setChecking(true);
+    setResult(null);
+    try {
+      const r = await window.api.checkForUpdates();
+      setResult(r);
+    } catch (e) {
+      setResult({ status: "error", message: String(e) });
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={check}
+        disabled={checking}
+        className="px-4 py-2 rounded-md bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-slate-100 text-sm"
+      >
+        {checking ? "Checking…" : "Check for updates"}
+      </button>
+      {result && (
+        <span className="text-xs text-slate-400 leading-tight">
+          {result.status === "current" && (
+            <>
+              You're on the latest version (
+              <span className="font-mono">v{result.version}</span>).
+            </>
+          )}
+          {result.status === "available" && (
+            <span className="text-cyan-300">
+              Update available: v{result.latestVersion} (you're on v{result.currentVersion}).
+              Downloading in the background — toast will appear when ready.
+            </span>
+          )}
+          {result.status === "unavailable" && (
+            <>No update info returned. May be offline or the publish provider is unreachable.</>
+          )}
+          {result.status === "error" && (
+            <span className="text-red-300">Check failed: {result.message}</span>
+          )}
+        </span>
+      )}
     </div>
   );
 }
