@@ -44,6 +44,8 @@ These items survive from the original `design-report.md` after the major lifts (
 - **What.** J/K vertical navigation through resource / schematic / inventory lists. Hotkeys for common actions ("a" to add to active, "i" to add to inventory, etc.).
 - **Why deferred.** Pure polish for power users. Mouse + click works fine for the core flows.
 
+### ~~Auto-updater~~ — DONE in v0.1.3 (b8fa28e)
+
 ### Crafting simulator (§5.7) — shelved, not deleted
 
 - **What.** Full simulator was shipped end-to-end (v1 → v1.3) then **shelved 2026-05-11 pending UX rework**. Math core (95 tests), IPC handlers, UI route, experimental-range data (1.1 MB JSON for 1660 schematics), migration 0005, and the extraction script all remain in the tree.
