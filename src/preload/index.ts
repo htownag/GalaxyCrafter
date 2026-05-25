@@ -58,6 +58,9 @@ const api: IpcApi = {
   getSchematicDepTree: (schematicId, maxDepth) =>
     ipcRenderer.invoke("schematics:depTree", schematicId, maxDepth),
 
+  // Phase 9d — Crafting plan
+  recommendCraft: (input) => ipcRenderer.invoke("schematics:recommendCraft", input),
+
   // Phase 9c — Settings
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveVerdictThresholds: (t) => ipcRenderer.invoke("settings:saveThresholds", t),

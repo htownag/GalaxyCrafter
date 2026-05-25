@@ -337,6 +337,78 @@ export interface SettingsExportResult {
   rowCounts: Record<string, number>;
 }
 
+// === Phase 9d: Crafting plan — per-slot best-owned + upgrade-available ===
+
+/**
+ * One slot's craft recommendation. For each raw resource slot the user has
+ * on the active schematic, surfaces:
+ *   - the single best resource currently in inventory that fits
+ *   - the single best resource currently spawning that fits
+ *   - the delta between them (positive = upgrade available)
+ *
+ * Sub-component slots (ingredientType ≠ 0) are excluded — they get a stub
+ * row so the player knows the slot exists but with no inventory matching
+ * (they craft the sub-component separately; see the dep-tree section).
+ */
+export interface CraftRecommendSlotResult {
+  slotName: string;
+  ingredientObject: string;
+  ingredientDisplayName: string | null;
+  unitsRequired: number;
+  /** True when this is a sub-component slot we can't score against. */
+  isSubComponent: boolean;
+  bestOwned: {
+    resourceId: string;
+    resourceName: string;
+    typeDisplayName: string;
+    score: number;
+    unitsOnHand: number;
+  } | null;
+  bestSpawning: {
+    resourceId: string;
+    resourceName: string;
+    typeDisplayName: string;
+    score: number;
+    /** True iff this resource is the SAME one as bestOwned (so no upgrade
+     *  exists — what spawns IS what you have). */
+    sameAsOwned: boolean;
+  } | null;
+  /** bestSpawning.score - bestOwned.score, when both are present. */
+  upgradeDelta: number | null;
+  /** True when upgradeDelta > UPGRADE_THRESHOLD (currently 1 point). */
+  upgradeAvailable: boolean;
+}
+
+export interface CraftRecommendPropertyGroupOption {
+  id: number;
+  propertyName: string | null;
+  expGroup: string | null;
+  weights: Array<{ stat: string; weight: number }>;
+}
+
+export interface CraftRecommendInput {
+  schematicId: string;
+  /** Omit to default to the first scoreable property group on the schematic. */
+  propertyGroupId?: number;
+}
+
+export interface CraftRecommendResult {
+  schematic: {
+    id: string;
+    name: string;
+    profession: string | null;
+  };
+  /** All scoreable property groups on this schematic, for the dropdown. */
+  availableGroups: CraftRecommendPropertyGroupOption[];
+  /** Which group the per-slot scoring was computed against. */
+  selectedGroup: CraftRecommendPropertyGroupOption;
+  /** All raw + sub-component slots, in schematic order. */
+  slots: CraftRecommendSlotResult[];
+  /** True when the active character has no inventory rows for this snapshot —
+   *  the UI shows a "fill your Crates first" hint in that case. */
+  inventoryEmpty: boolean;
+}
+
 // === Phase 9b: Schematic dependency tree ===
 
 /**
@@ -827,6 +899,9 @@ export interface IpcApi {
 
   // Phase 9b — Schematic dependency tree
   getSchematicDepTree(schematicId: string, maxDepth?: number): Promise<SchematicDepTreeResult | null>;
+
+  // Phase 9d — Crafting plan (best-owned per slot + upgrade flag)
+  recommendCraft(input: CraftRecommendInput): Promise<CraftRecommendResult | null>;
 
   // Phase 9c — Settings
   getSettings(): Promise<SettingsSnapshot>;

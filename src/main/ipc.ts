@@ -79,6 +79,10 @@ import {
   type SlotFill,
 } from "../core/simulator/types";
 import type {
+  CraftRecommendInput,
+  CraftRecommendPropertyGroupOption,
+  CraftRecommendResult,
+  CraftRecommendSlotResult,
   DashboardData,
   DashboardInventoryHealth,
   DashboardSbCard,
@@ -1916,6 +1920,9 @@ export function registerIpc(): void {
   // Wire Phase 9b dependency-tree handler.
   registerDepTreeHandler();
 
+  // Wire Phase 9d crafting-plan handler.
+  registerCraftRecommendHandler();
+
   // Wire Phase 9c settings handlers (threshold overrides + data export).
   registerSettingsHandlers();
 }
@@ -2944,4 +2951,314 @@ export function registerSettingsHandlers(): void {
     await writeFile(result.filePath, payload, "utf8");
     return { path: result.filePath, bytes: Buffer.byteLength(payload, "utf8"), rowCounts };
   });
+}
+
+// === Phase 9d: Crafting plan ===
+//
+// Per-slot "what's the best resource I own for this craft, and is there an
+// upgrade currently spawning?" recommendation. Reuses the verdict engine's
+// score.ts for the per-resource scoring against a chosen property group
+// (the player picks which experiment they care about via the UI dropdown,
+// e.g. expDamage vs expDurability for a weapon).
+//
+// A 1-point upgrade-delta threshold filters out noise: spawn 0.4 points
+// better than owned isn't a meaningful upgrade.
+
+const CRAFT_UPGRADE_THRESHOLD = 1.0;
+
+export function registerCraftRecommendHandler(): void {
+  ipcMain.handle(
+    "schematics:recommendCraft",
+    async (
+      _evt,
+      input: CraftRecommendInput,
+    ): Promise<CraftRecommendResult | null> => {
+      const db = getDb();
+      const schem = db
+        .select()
+        .from(schematics)
+        .where(eq(schematics.id, input.schematicId))
+        .get();
+      if (!schem) return null;
+
+      // Property groups + weights for the dropdown + scoring.
+      const groupRows = db
+        .select()
+        .from(schematicPropertyGroups)
+        .where(eq(schematicPropertyGroups.schematicId, input.schematicId))
+        .all();
+      const groupIds = groupRows.map((g) => g.id);
+      const weightRows =
+        groupIds.length > 0
+          ? db
+              .select()
+              .from(schematicPropertyWeights)
+              .where(inArray(schematicPropertyWeights.groupId, groupIds))
+              .all()
+          : [];
+      const weightsByGroup = new Map<number, Array<{ stat: StatKey; weight: number }>>();
+      for (const w of weightRows) {
+        const arr = weightsByGroup.get(w.groupId) ?? [];
+        arr.push({ stat: w.stat as StatKey, weight: w.weight });
+        weightsByGroup.set(w.groupId, arr);
+      }
+      const availableGroups: CraftRecommendPropertyGroupOption[] = groupRows
+        .map((g) => ({
+          id: g.id,
+          propertyName: g.propertyName,
+          expGroup: g.expGroup,
+          weights: weightsByGroup.get(g.id) ?? [],
+        }))
+        .filter((g) => g.weights.length > 0);
+
+      if (availableGroups.length === 0) {
+        // No scoreable groups → no crafting plan to compute. Return shell so
+        // the UI can show "this schematic has no scoreable properties."
+        const allSlots = db
+          .select()
+          .from(schematicSlots)
+          .where(eq(schematicSlots.schematicId, input.schematicId))
+          .all();
+        return {
+          schematic: {
+            id: schem.id,
+            name: schem.name,
+            profession: professionForSkillGroup(schem.skillGroup),
+          },
+          availableGroups: [],
+          selectedGroup: {
+            id: 0,
+            propertyName: null,
+            expGroup: null,
+            weights: [],
+          },
+          slots: allSlots.map((s) => ({
+            slotName: s.slotName,
+            ingredientObject: s.ingredientObject,
+            ingredientDisplayName: null,
+            unitsRequired: s.unitsRequired,
+            isSubComponent: s.ingredientType !== 0,
+            bestOwned: null,
+            bestSpawning: null,
+            upgradeDelta: null,
+            upgradeAvailable: false,
+          })),
+          inventoryEmpty: true,
+        };
+      }
+
+      const selectedGroup =
+        availableGroups.find((g) => g.id === input.propertyGroupId) ??
+        availableGroups[0];
+
+      // All slots on the schematic (raw + sub-component).
+      const allSlots = db
+        .select()
+        .from(schematicSlots)
+        .where(eq(schematicSlots.schematicId, input.schematicId))
+        .all();
+
+      // Active character + latest snapshot context.
+      const activeCharId = getSetting("active.character");
+      const character = activeCharId
+        ? db.select().from(characters).where(eq(characters.id, activeCharId)).get()
+        : null;
+      const galaxyId = character?.galaxyId ?? null;
+
+      const latestSnapshot = galaxyId
+        ? db
+            .select()
+            .from(snapshots)
+            .where(eq(snapshots.galaxyId, galaxyId))
+            .orderBy(desc(snapshots.fetchedAt))
+            .limit(1)
+            .get()
+        : null;
+
+      // Spawn-pool resource ids for this snapshot.
+      const spawnObs = latestSnapshot
+        ? db
+            .select()
+            .from(resourceObservations)
+            .where(eq(resourceObservations.snapshotId, latestSnapshot.id))
+            .all()
+        : [];
+      const spawnIds = new Set(spawnObs.map((o) => o.resourceId));
+
+      // Live-inventory rows for this character.
+      const invRows = activeCharId
+        ? db
+            .select()
+            .from(inventoryEntries)
+            .where(
+              and(
+                eq(inventoryEntries.characterId, activeCharId),
+                eq(inventoryEntries.status, "live"),
+              ),
+            )
+            .all()
+        : [];
+      const invByResource = new Map(invRows.map((r) => [r.resourceId, r]));
+
+      // Pull the resource rows we'll be scoring (union of inventory + spawning).
+      const candidateIds = Array.from(new Set([...spawnIds, ...invRows.map((r) => r.resourceId)]));
+      const resourceRows =
+        candidateIds.length > 0
+          ? db.select().from(resources).where(inArray(resources.id, candidateIds)).all()
+          : [];
+      const resourceById = new Map(resourceRows.map((r) => [r.id, r]));
+
+      // Type-ancestor map for compat checks.
+      const typeIds = Array.from(new Set(resourceRows.map((r) => r.typeId)));
+      const tgEdges =
+        typeIds.length > 0
+          ? db
+              .select()
+              .from(resourceTypeGroups)
+              .where(inArray(resourceTypeGroups.typeId, typeIds))
+              .all()
+          : [];
+      const typeAncestors = buildTypeAncestorMap(tgEdges);
+
+      // Type display names for nicer surfacing in the UI.
+      const typeNameById = new Map<string, string>();
+      if (typeIds.length > 0) {
+        const typeHits = db
+          .select()
+          .from(resourceTypes)
+          .where(inArray(resourceTypes.id, typeIds))
+          .all();
+        for (const t of typeHits) typeNameById.set(t.id, t.name);
+      }
+
+      // Ingredient display-name resolution (mirrors detail handler).
+      const ingredientIds = Array.from(
+        new Set(allSlots.filter((s) => s.ingredientType === 0).map((s) => s.ingredientObject)),
+      );
+      const ingredientDisplayNames = new Map<string, string>();
+      if (ingredientIds.length > 0) {
+        const groupHits = db
+          .select()
+          .from(resourceGroups)
+          .where(inArray(resourceGroups.id, ingredientIds))
+          .all();
+        for (const g of groupHits) ingredientDisplayNames.set(g.id, g.name);
+        const remaining = ingredientIds.filter((i) => !ingredientDisplayNames.has(i));
+        if (remaining.length > 0) {
+          const typeHits2 = db
+            .select()
+            .from(resourceTypes)
+            .where(inArray(resourceTypes.id, remaining))
+            .all();
+          for (const t of typeHits2) ingredientDisplayNames.set(t.id, t.name);
+        }
+      }
+
+      // Score one resource against the selected property group's weights.
+      function scoreResource(r: typeof resourceRows[number]): number | null {
+        const stats: ResourceStats = {
+          OQ: r.oq, CR: r.cr, CD: r.cd, DR: r.dr, FL: r.fl, HR: r.hr,
+          MA: r.ma, PE: r.pe, SR: r.sr, UT: r.ut, ER: r.er,
+        };
+        return scoreGroup(stats, selectedGroup.weights);
+      }
+
+      // Build per-slot recommendation.
+      const slotResults: CraftRecommendSlotResult[] = allSlots.map((slot) => {
+        const isSubComponent = slot.ingredientType !== 0;
+        const ingredientDisplayName = ingredientDisplayNames.get(slot.ingredientObject) ?? null;
+
+        if (isSubComponent) {
+          // Sub-component slots — no inventory matching. Skipping with a stub
+          // row so the UI can still surface "this slot exists, it wants a
+          // crafted component, see the dependency tree."
+          return {
+            slotName: slot.slotName,
+            ingredientObject: slot.ingredientObject,
+            ingredientDisplayName,
+            unitsRequired: slot.unitsRequired,
+            isSubComponent: true,
+            bestOwned: null,
+            bestSpawning: null,
+            upgradeDelta: null,
+            upgradeAvailable: false,
+          };
+        }
+
+        // Walk all candidates, partition by compat + source.
+        let bestOwned: CraftRecommendSlotResult["bestOwned"] = null;
+        let bestSpawning: CraftRecommendSlotResult["bestSpawning"] = null;
+
+        for (const r of resourceRows) {
+          if (!resourceTypeFitsRawSlot(r.typeId, slot.ingredientObject, typeAncestors)) continue;
+          const score = scoreResource(r);
+          if (score === null) continue;
+          const typeDisplayName = typeNameById.get(r.typeId) ?? r.typeId;
+
+          if (invByResource.has(r.id)) {
+            const inv = invByResource.get(r.id);
+            if (!bestOwned || score > bestOwned.score) {
+              bestOwned = {
+                resourceId: r.id,
+                resourceName: r.name,
+                typeDisplayName,
+                score,
+                unitsOnHand: inv?.unitsOnHand ?? 0,
+              };
+            }
+          }
+          if (spawnIds.has(r.id)) {
+            if (!bestSpawning || score > bestSpawning.score) {
+              bestSpawning = {
+                resourceId: r.id,
+                resourceName: r.name,
+                typeDisplayName,
+                score,
+                sameAsOwned: bestOwned?.resourceId === r.id,
+              };
+            }
+          }
+        }
+
+        // Recompute the sameAsOwned flag in case bestOwned shifted after
+        // bestSpawning was first set on the same resource.
+        if (bestSpawning && bestOwned && bestSpawning.resourceId === bestOwned.resourceId) {
+          bestSpawning = { ...bestSpawning, sameAsOwned: true };
+        } else if (bestSpawning) {
+          bestSpawning = { ...bestSpawning, sameAsOwned: false };
+        }
+
+        let upgradeDelta: number | null = null;
+        let upgradeAvailable = false;
+        if (bestOwned && bestSpawning && !bestSpawning.sameAsOwned) {
+          upgradeDelta = bestSpawning.score - bestOwned.score;
+          upgradeAvailable = upgradeDelta > CRAFT_UPGRADE_THRESHOLD;
+        }
+
+        return {
+          slotName: slot.slotName,
+          ingredientObject: slot.ingredientObject,
+          ingredientDisplayName,
+          unitsRequired: slot.unitsRequired,
+          isSubComponent: false,
+          bestOwned,
+          bestSpawning,
+          upgradeDelta,
+          upgradeAvailable,
+        };
+      });
+
+      return {
+        schematic: {
+          id: schem.id,
+          name: schem.name,
+          profession: professionForSkillGroup(schem.skillGroup),
+        },
+        availableGroups,
+        selectedGroup,
+        slots: slotResults,
+        inventoryEmpty: invRows.length === 0,
+      };
+    },
+  );
 }

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type {
+  CraftRecommendResult,
+  CraftRecommendSlotResult,
   SchematicDepNode,
   SchematicDepRawSlot,
   SchematicDepTreeResult,
@@ -180,6 +182,8 @@ export function SchematicDetail(): JSX.Element {
           {message}
         </div>
       )}
+
+      {detail.isActive && character && <CraftingPlanPanel schematicId={detail.id} />}
 
       <section className="mb-8">
         <h3 className="text-sm font-medium text-slate-300 mb-2">
@@ -472,4 +476,219 @@ function DepTreeNode({ node, rawSlots, allRawSlots }: DepTreeNodeProps): JSX.Ele
       )}
     </li>
   );
+}
+
+// =============================================================
+// Phase 9d — Crafting plan panel
+// =============================================================
+//
+// Per-slot "what's the best resource I currently own for this craft, and is
+// there an upgrade available in current spawns?" view. Property-group
+// dropdown drives the scoring across the whole pane (a weapon's expDamage
+// rewards different stats than its expRange, etc., so the player picks
+// which experiment they care about). Calls `schematics:recommendCraft`
+// which scores via the same verdict-engine helpers.
+
+function CraftingPlanPanel({ schematicId }: { schematicId: string }): JSX.Element {
+  const [data, setData] = useState<CraftRecommendResult | null>(null);
+  const [groupId, setGroupId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await window.api.recommendCraft({
+        schematicId,
+        propertyGroupId: groupId ?? undefined,
+      });
+      setData(result);
+      if (result && groupId === null) setGroupId(result.selectedGroup.id);
+    } finally {
+      setLoading(false);
+    }
+  }, [schematicId, groupId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Refetch when verdicts:updated fires (snapshot ingest, inventory edit,
+  // active-list change). Keeps the plan in sync with the live state.
+  useEffect(() => {
+    const off = window.api.onVerdictsUpdated(() => {
+      void load();
+    });
+    return off;
+  }, [load]);
+
+  if (loading && !data) {
+    return (
+      <section className="mb-8 rounded-md border border-slate-700 bg-slate-900 p-4">
+        <p className="text-xs text-slate-500">Loading crafting plan…</p>
+      </section>
+    );
+  }
+  if (!data) return <></>;
+
+  return (
+    <section className="mb-8 rounded-md border border-emerald-800 bg-emerald-950/20 p-4">
+      <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+        <h3 className="text-sm font-semibold text-emerald-300">
+          Crafting plan — best owned per slot
+        </h3>
+        <div className="flex items-center gap-2 text-xs">
+          <label className="text-slate-400">Score for:</label>
+          <select
+            value={groupId ?? ""}
+            onChange={(e) => setGroupId(Number(e.target.value))}
+            disabled={data.availableGroups.length === 0}
+            className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-100"
+          >
+            {data.availableGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.propertyName ?? "(unnamed)"}{g.expGroup ? ` · ${g.expGroup}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {data.availableGroups.length === 0 ? (
+        <p className="text-xs text-slate-500">
+          This schematic has no scoreable property groups — nothing to recommend.
+        </p>
+      ) : data.inventoryEmpty ? (
+        <p className="text-xs text-amber-300">
+          Your Crates are empty. Add owned resources on the{" "}
+          <Link to="/inventory" className="underline hover:text-amber-100">
+            Crates tab
+          </Link>{" "}
+          and verdicts here will compare them against current spawns.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded border border-slate-700">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-800 text-slate-300 text-xs">
+              <tr>
+                <th className="px-2 py-2 text-left font-medium">Slot</th>
+                <th className="px-2 py-2 text-left font-medium">Best owned</th>
+                <th className="px-2 py-2 text-right font-medium">Score</th>
+                <th className="px-2 py-2 text-right font-medium">Units</th>
+                <th className="px-2 py-2 text-left font-medium">Upgrade in current spawns</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.slots.map((slot) => (
+                <CraftingPlanRow key={slot.slotName} slot={slot} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[10px] text-slate-500 mt-2 leading-tight">
+        Scoring uses the verdict engine's universal 0..100 scale for the selected property group's
+        stat weights. "Upgrade" flags spawn-vs-owned deltas above 1.0 point.
+      </p>
+    </section>
+  );
+}
+
+function CraftingPlanRow({ slot }: { slot: CraftRecommendSlotResult }): JSX.Element {
+  if (slot.isSubComponent) {
+    return (
+      <tr className="border-t border-slate-700">
+        <td className="px-2 py-1.5">
+          <span className="text-slate-200 text-xs">{humaniseSlotName(slot.slotName)}</span>
+          <span className="ml-1 text-[10px] text-slate-500">(sub-component)</span>
+        </td>
+        <td className="px-2 py-1.5 text-xs text-slate-500" colSpan={4}>
+          Sub-component — craft separately. See the dependency tree below.
+        </td>
+      </tr>
+    );
+  }
+
+  if (!slot.bestOwned) {
+    return (
+      <tr className="border-t border-slate-700">
+        <td className="px-2 py-1.5">
+          <span className="text-slate-200 text-xs">{humaniseSlotName(slot.slotName)}</span>
+          <span className="ml-1 text-[10px] text-slate-500 font-mono">
+            {slot.unitsRequired}u · {slot.ingredientDisplayName ?? slot.ingredientObject}
+          </span>
+        </td>
+        <td className="px-2 py-1.5 text-xs text-amber-400" colSpan={3}>
+          — none in inventory —
+        </td>
+        <td className="px-2 py-1.5 text-xs">
+          {slot.bestSpawning ? (
+            <span className="text-emerald-300">
+              CHASE: {slot.bestSpawning.resourceName} ({slot.bestSpawning.score.toFixed(1)})
+            </span>
+          ) : (
+            <span className="text-slate-500">—</span>
+          )}
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="border-t border-slate-700">
+      <td className="px-2 py-1.5">
+        <span className="text-slate-200 text-xs">{humaniseSlotName(slot.slotName)}</span>
+        <span className="ml-1 text-[10px] text-slate-500 font-mono">
+          {slot.unitsRequired}u · {slot.ingredientDisplayName ?? slot.ingredientObject}
+        </span>
+      </td>
+      <td className="px-2 py-1.5">
+        <Link
+          to={`/resources/${slot.bestOwned.resourceId}`}
+          className="text-emerald-400 hover:text-emerald-300 text-xs"
+        >
+          {slot.bestOwned.resourceName}
+        </Link>
+        <span className="ml-1 text-[10px] text-slate-500">{slot.bestOwned.typeDisplayName}</span>
+      </td>
+      <td className="px-2 py-1.5 text-right tabular-nums text-slate-100">
+        {slot.bestOwned.score.toFixed(1)}
+      </td>
+      <td className="px-2 py-1.5 text-right tabular-nums text-slate-400 text-xs">
+        {slot.bestOwned.unitsOnHand.toLocaleString()}
+      </td>
+      <td className="px-2 py-1.5 text-xs">
+        {slot.upgradeAvailable && slot.bestSpawning && slot.upgradeDelta !== null ? (
+          <span>
+            <span className="text-amber-300 font-semibold">CHASE</span>{" "}
+            <Link
+              to={`/resources/${slot.bestSpawning.resourceId}`}
+              className="text-amber-300 hover:text-amber-200 underline"
+            >
+              {slot.bestSpawning.resourceName}
+            </Link>{" "}
+            <span className="text-slate-400">
+              ({slot.bestSpawning.score.toFixed(1)}, +{slot.upgradeDelta.toFixed(1)})
+            </span>
+          </span>
+        ) : slot.bestSpawning?.sameAsOwned ? (
+          <span className="text-slate-500">— same resource spawning —</span>
+        ) : slot.bestSpawning && slot.upgradeDelta !== null ? (
+          <span className="text-slate-500">
+            best spawn: {slot.bestSpawning.resourceName} ({slot.bestSpawning.score.toFixed(1)},
+            {slot.upgradeDelta >= 0 ? "+" : ""}{slot.upgradeDelta.toFixed(1)})
+          </span>
+        ) : (
+          <span className="text-slate-500">no current spawn</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+/** snake_case slot names → display ("frame_assembly" → "Frame Assembly"). */
+function humaniseSlotName(s: string): string {
+  return s
+    .split(/[_\s]+/)
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
+    .join(" ");
 }
