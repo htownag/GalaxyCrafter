@@ -21,8 +21,23 @@
 // matched crafting reality; the formula in the prose did not. This
 // implementation matches the example. See design-report.md errata.
 //
-// Returns `null` if any weighted stat is missing on the resource
-// (filtered out per Phase 3 NULL-stat-semantics decision).
+// Missing/null stats are treated as 0 — matches Core3's
+// `SharedLabratory::getWeightedValue` exactly:
+//
+//   if (stat != 0) { nsum += n; weightedAverage += stat * n; }
+//
+// Before v0.1.5 this function returned `null` on any missing weighted stat,
+// which filtered the resource out of the verdict + finder + crafting-plan
+// entirely. That was an over-strict Phase 3 choice — Core3 doesn't filter,
+// it just scores the resource lower because the missing stat contributes 0
+// to the weighted sum. Real-world cost: chemicals (which can't roll SR/UT
+// on some types) were invisible in armor + power-handler crafts where
+// they're the only allowed resource family. With null-as-0, those
+// resources score honestly low (matching the in-game craft cap) but stay
+// visible so the player can rank within their family.
+//
+// Returns `null` only when the property group itself is unscoreable
+// (no weights or all-zero weights — a derived attribute group).
 
 import type { StatKey } from "@shared/ipc-types";
 import type { ResourceStats, StatWeight } from "./types";
@@ -33,8 +48,11 @@ export const UNIVERSAL_STAT_MAX = 1000;
 /**
  * Compute one property-group score for one resource.
  *
- * @returns Score in [0, 100], or `null` if the resource is missing any
- *          stat the property group weights.
+ * @returns Score in [0, 100], or `null` only if the property group itself
+ *          carries no weights (i.e. it's a derived attribute group that
+ *          doesn't depend on resource stats). Resources missing one or more
+ *          weighted stats still get a score — those stats contribute 0,
+ *          matching Core3's `getWeightedValue` math.
  */
 export function scoreGroup(
   stats: ResourceStats,
@@ -49,8 +67,10 @@ export function scoreGroup(
   let weightedPct = 0;
   for (const w of weights) {
     const stat = w.stat as StatKey;
-    const v = stats[stat];
-    if (v === null || v === undefined) return null; // missing weighted stat
+    // Missing/null treated as 0 — Core3 parity. Resource is penalised but
+    // not filtered out, preserving the player's ability to rank within a
+    // resource family that can't roll every weighted stat.
+    const v = stats[stat] ?? 0;
     weightedPct += (w.weight / weightSum) * (v / UNIVERSAL_STAT_MAX);
   }
 

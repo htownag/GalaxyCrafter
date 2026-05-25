@@ -95,15 +95,58 @@ describe("scoreGroup — real T21 mindamage data shape", () => {
 });
 
 describe("scoreGroup — null and edge cases", () => {
-  it("returns null when a weighted stat is null", () => {
+  // Phase 3 returned null when a weighted stat was missing — filtered the
+  // resource out of all downstream surfaces. v0.1.5 flipped to null-as-0
+  // (Core3 parity), so this case now returns 0, not null.
+  it("missing weighted stat is treated as 0 (Core3 parity)", () => {
     const weights: StatWeight[] = [{ stat: "OQ", weight: 1 }];
     const score = scoreGroup(stats({}), weights);
+    expect(score).toBe(0);
+  });
+
+  it("returns null on empty weight list (genuinely unscoreable group)", () => {
+    const score = scoreGroup(stats({ OQ: 900 }), []);
     expect(score).toBeNull();
   });
 
-  it("returns null on empty weight list", () => {
-    const score = scoreGroup(stats({ OQ: 900 }), []);
-    expect(score).toBeNull();
+  // Concrete real-world case from v0.1.5 deep-dive: petrochem_inert_lubricating_oil
+  // only carries OQ + DR per its type caps. Armor Segment's armor_effectiveness
+  // weights OQ + SR. The oil's missing SR contributes 0 to the weighted sum;
+  // a high-OQ oil still scores honestly against the property's theoretical max.
+  it("lubricating-oil-style: high OQ with missing SR scores ~half of OQ-pct", () => {
+    const weights: StatWeight[] = [
+      { stat: "OQ", weight: 1 },
+      { stat: "SR", weight: 1 },
+    ];
+    // OQ=900, SR=null → (0.5 * 90) + (0.5 * 0) = 45
+    const score = scoreGroup(stats({ OQ: 900 }), weights);
+    expect(score).toBeCloseTo(45, 5);
+  });
+
+  it("differentiates within a partial-stat family by the stat they DO carry", () => {
+    const weights: StatWeight[] = [
+      { stat: "OQ", weight: 1 },
+      { stat: "SR", weight: 1 },
+    ];
+    const greatOil = scoreGroup(stats({ OQ: 950 }), weights);
+    const okOil = scoreGroup(stats({ OQ: 600 }), weights);
+    const badOil = scoreGroup(stats({ OQ: 200 }), weights);
+    expect(greatOil!).toBeGreaterThan(okOil!);
+    expect(okOil!).toBeGreaterThan(badOil!);
+    expect(greatOil!).toBeCloseTo(47.5, 3);
+    expect(okOil!).toBeCloseTo(30, 3);
+    expect(badOil!).toBeCloseTo(10, 3);
+  });
+
+  it("treats null and explicit 0 identically (both contribute 0)", () => {
+    const weights: StatWeight[] = [
+      { stat: "OQ", weight: 1 },
+      { stat: "SR", weight: 1 },
+    ];
+    const nullSR = scoreGroup(stats({ OQ: 800 }), weights);
+    const zeroSR = scoreGroup(stats({ OQ: 800, SR: 0 }), weights);
+    expect(nullSR).toBe(zeroSR);
+    expect(nullSR).toBeCloseTo(40, 5);
   });
 
   it("normalises unequal weights correctly (weight sum != 100)", () => {
