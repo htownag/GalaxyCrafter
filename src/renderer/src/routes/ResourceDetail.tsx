@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { ResourceDetail as ResourceDetailType, StatKey } from "@shared/ipc-types";
+import type {
+  InventoryStatus,
+  ResourceDetail as ResourceDetailType,
+  StatKey,
+} from "@shared/ipc-types";
 import { STAT_KEYS } from "@shared/ipc-types";
 import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
@@ -99,6 +103,16 @@ export function ResourceDetail(): JSX.Element {
   const [detail, setDetail] = useState<ResourceDetailType | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // v0.1.7: inline "Add to Crates" form right under the verdict pills.
+  // Faster than bouncing over to the Inventory route just to track one
+  // spawn the user is already looking at.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addUnits, setAddUnits] = useState("");
+  const [addStatus, setAddStatus] = useState<InventoryStatus>("live");
+  const [addNotes, setAddNotes] = useState("");
+  const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -106,6 +120,39 @@ export function ResourceDetail(): JSX.Element {
     setDetail(d);
     setLoading(false);
   }, [id]);
+
+  async function submitAdd(): Promise<void> {
+    if (!character || !detail) return;
+    const n = Number.parseInt(addUnits, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      setAddError("Units must be a non-negative whole number.");
+      return;
+    }
+    setAddSaving(true);
+    setAddError(null);
+    try {
+      await window.api.upsertInventory({
+        characterId: character.id,
+        resourceId: detail.id,
+        units: n,
+        status: addStatus,
+        notes: addNotes.trim() || null,
+      });
+      setAddOpen(false);
+      setAddUnits("");
+      setAddNotes("");
+      setAddStatus("live");
+      // Reload the detail so the "In your Crates" section appears, the
+      // verdict refreshes (UNLOCK may flip off if this resource just
+      // covered a slot), and the active character's verdict cache is
+      // re-read. Recompute happens server-side in upsertInventory.
+      await load();
+    } catch (e) {
+      setAddError(String(e));
+    } finally {
+      setAddSaving(false);
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -171,27 +218,141 @@ export function ResourceDetail(): JSX.Element {
           )}
         </div>
 
-        {detail.verdict && (
+        {/* Top-right rail: verdict pills + "Add to Crates" button/form.
+            Renders even without a verdict so the player can still track a
+            spawn that hasn't matched any active schematic yet. */}
+        {(detail.verdict || character) && (
           <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-1">
-              <span
-                className={`inline-flex items-center px-3 py-1 rounded-md border text-sm font-medium ${TIER_PILL[detail.verdict.tier]}`}
-              >
-                {detail.verdict.tier}
-              </span>
-              {/* v0.1.6 UNLOCK badge — orthogonal to tier. */}
-              {detail.verdict.unlocksAny && (
-                <span
-                  className="inline-flex items-center px-3 py-1 rounded-md border text-sm font-medium bg-yellow-900/50 border-yellow-700 text-yellow-200"
-                  title={`UNLOCKS ${detail.verdict.unlocks.length} slot${detail.verdict.unlocks.length === 1 ? "" : "s"} you can't currently cover`}
-                >
-                  UNLOCK
+            {detail.verdict && (
+              <>
+                <div className="flex items-center gap-1">
+                  <span
+                    className={`inline-flex items-center px-3 py-1 rounded-md border text-sm font-medium ${TIER_PILL[detail.verdict.tier]}`}
+                  >
+                    {detail.verdict.tier}
+                  </span>
+                  {/* v0.1.6 UNLOCK badge — orthogonal to tier. */}
+                  {detail.verdict.unlocksAny && (
+                    <span
+                      className="inline-flex items-center px-3 py-1 rounded-md border text-sm font-medium bg-yellow-900/50 border-yellow-700 text-yellow-200"
+                      title={`UNLOCKS ${detail.verdict.unlocks.length} slot${detail.verdict.unlocks.length === 1 ? "" : "s"} you can't currently cover`}
+                    >
+                      UNLOCK
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-slate-400 tabular-nums">
+                  top score {detail.verdict.topScore.toFixed(1)}
                 </span>
-              )}
-            </div>
-            <span className="text-xs text-slate-400 tabular-nums">
-              top score {detail.verdict.topScore.toFixed(1)}
-            </span>
+              </>
+            )}
+            {/* v0.1.7: Quick-add to Crates. Only shown when there's no
+                existing inventory row (the "In your Crates" section below
+                handles edits). One-click open of an inline form keeps the
+                player on this page — no route bounce. */}
+            {character && !detail.inventory && !addOpen && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAddOpen(true);
+                  setAddError(null);
+                }}
+                className="mt-1 px-3 py-1.5 rounded-md bg-cyan-700 hover:bg-cyan-600 text-cyan-100 text-xs font-medium border border-cyan-800"
+              >
+                + Add to Crates
+              </button>
+            )}
+            {character && !detail.inventory && addOpen && (
+              <div className="mt-1 p-3 rounded-md border border-cyan-800 bg-cyan-950/40 w-64">
+                <h4 className="text-xs font-medium text-cyan-200 mb-2">
+                  Add {detail.name} to Crates
+                </h4>
+                <div className="space-y-2">
+                  <label className="block">
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wide">
+                      Units
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      value={addUnits}
+                      onChange={(e) => setAddUnits(e.target.value)}
+                      placeholder="e.g. 5000"
+                      className="mt-0.5 w-full px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-600 tabular-nums"
+                      disabled={addSaving}
+                      // biome-ignore lint/a11y/noAutofocus: form is opened by user click
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void submitAdd();
+                        } else if (e.key === "Escape") {
+                          setAddOpen(false);
+                          setAddError(null);
+                        }
+                      }}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wide">
+                      Status
+                    </span>
+                    <select
+                      value={addStatus}
+                      onChange={(e) => setAddStatus(e.target.value as InventoryStatus)}
+                      disabled={addSaving}
+                      className="mt-0.5 w-full px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-100 text-sm"
+                    >
+                      <option value="live">live (covers UNLOCK)</option>
+                      <option value="reserved">reserved (covers UNLOCK)</option>
+                      <option value="despawned">despawned (does NOT cover)</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wide">
+                      Notes <span className="text-slate-600 normal-case">(optional)</span>
+                    </span>
+                    <input
+                      type="text"
+                      value={addNotes}
+                      onChange={(e) => setAddNotes(e.target.value)}
+                      placeholder="e.g. west of Bestine"
+                      className="mt-0.5 w-full px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-100 text-xs"
+                      disabled={addSaving}
+                    />
+                  </label>
+                  {addError && (
+                    <p className="text-[11px] text-red-300">{addError}</p>
+                  )}
+                  <div className="flex gap-2 justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddOpen(false);
+                        setAddError(null);
+                      }}
+                      disabled={addSaving}
+                      className="px-3 py-1 text-xs text-slate-400 hover:text-slate-200"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void submitAdd()}
+                      disabled={addSaving}
+                      className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-medium"
+                    >
+                      {addSaving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* When the resource IS already in inventory, the existing
+                "In your Crates" section below has the edit link. We don't
+                duplicate it here — the in-page section is more informative
+                (shows current units + notes). */}
           </div>
         )}
       </div>
