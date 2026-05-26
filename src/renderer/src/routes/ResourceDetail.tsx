@@ -304,9 +304,9 @@ export function ResourceDetail(): JSX.Element {
                       disabled={addSaving}
                       className="mt-0.5 w-full px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-100 text-sm"
                     >
-                      <option value="live">live (covers UNLOCK)</option>
-                      <option value="reserved">reserved (covers UNLOCK)</option>
-                      <option value="despawned">despawned (does NOT cover)</option>
+                      <option value="live">live (currently spawning)</option>
+                      <option value="reserved">reserved (earmarked)</option>
+                      <option value="despawned">despawned (still in stash)</option>
                     </select>
                   </label>
                   <label className="block">

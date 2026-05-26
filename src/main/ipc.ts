@@ -552,9 +552,9 @@ export function registerIpc(): void {
       : false;
 
     // v0.1.6 UNLOCK header pill: "X/Y slots covered" for the active
-    // character's live + reserved inventory. Null when no active character.
-    // We compute per-(slot, family) coverage using the existing IFF compat
-    // map (same as recompute.ts); despawned does NOT cover.
+    // character's inventory. Null when no active character.
+    // v0.1.8 — ALL statuses count (live + reserved + despawned). See
+    // recompute.ts comment + design-unlock-tier.md §Q2 errata.
     const rawSlots = slotsRows.filter((sl) => sl.ingredientType === 0);
     let rawSlotsCovered: number | null = null;
     const rawSlotsTotal = rawSlots.length;
@@ -562,12 +562,7 @@ export function registerIpc(): void {
       const invRows = db
         .select()
         .from(inventoryEntries)
-        .where(
-          and(
-            eq(inventoryEntries.characterId, activeCharId),
-            inArray(inventoryEntries.status, ["live", "reserved"]),
-          ),
-        )
+        .where(eq(inventoryEntries.characterId, activeCharId))
         .all();
       if (invRows.length === 0) {
         rawSlotsCovered = 0;

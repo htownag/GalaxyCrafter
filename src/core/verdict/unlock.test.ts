@@ -266,10 +266,13 @@ describe("UNLOCK end-to-end through both helpers — Ryan's chromium-aluminum sc
     expect(unlocks).toHaveLength(0);
   });
 
-  // The advisor-walkthrough scenario, verifying Q2 flip: despawned ≠ live.
-  // The orchestrator passes ONLY live+reserved typeIds in. We simulate
-  // 50 despawned units → coveringTypeIds is empty.
-  it("despawned-only inventory does NOT cover (Q2 flip)", () => {
+  // v0.1.8 reverted the v0.1.6 "despawned doesn't cover" rule. The
+  // orchestrator now passes ALL statuses into coveringTypeIds. Real-world
+  // evidence: players hold large stockpiles of despawned material they
+  // actively craft from — treating them as uncovered made UNLOCK fire
+  // on families they were already swimming in. Replenishment of
+  // drainable stashes belongs in a future REORDER lane, not UNLOCK.
+  it("despawned inventory DOES cover (v0.1.8 — all statuses count)", () => {
     const activeSlots: ActiveSlot[] = [
       {
         schematicId: "armor_seg",
@@ -278,27 +281,28 @@ describe("UNLOCK end-to-end through both helpers — Ryan's chromium-aluminum sc
         ingredientObject: "iron",
       },
     ];
-    // Player has 50 units of iron_dolovite, status='despawned'. The
-    // orchestrator filtered those rows OUT of coveringTypeIds. So:
-    const coveringTypeIds = new Set<string>();
+    // Player has 30,000 units of iron_dolovite, status='despawned'. The
+    // orchestrator now INCLUDES that row in coveringTypeIds.
+    const coveringTypeIds = new Set(["res_iron_dolovite"]);
     const fitsSlot = makeFits({
       res_iron_dolovite: ["iron", "iron_dolovite"],
       res_iron_anaxite: ["iron", "iron_anaxite"],
     });
 
     const uncovered = computeUncoveredSlots(activeSlots, coveringTypeIds, fitsSlot);
-    expect(uncovered).toHaveLength(1);
+    expect(uncovered).toHaveLength(0);
 
-    // A fresh iron_anaxite spawn fires UNLOCK (same family, replenishment).
+    // A fresh iron_anaxite spawn does NOT fire UNLOCK — the family is covered
+    // by the despawned stash, no matter how mediocre it is.
     const unlocks = computeResourceUnlocks(
       "res_iron_anaxite",
       uncovered,
       fitsSlot,
     );
-    expect(unlocks).toHaveLength(1);
+    expect(unlocks).toHaveLength(0);
   });
 
-  it("reserved inventory DOES cover (player intent, not supply loss)", () => {
+  it("reserved inventory covers (intent-tagged, never went away)", () => {
     const activeSlots: ActiveSlot[] = [
       {
         schematicId: "armor_seg",
@@ -307,8 +311,6 @@ describe("UNLOCK end-to-end through both helpers — Ryan's chromium-aluminum sc
         ingredientObject: "iron",
       },
     ];
-    // Player has 50 units reserved (earmarked for a later batch).
-    // The orchestrator INCLUDED reserved in coveringTypeIds.
     const coveringTypeIds = new Set(["res_iron"]);
     const fitsSlot = makeFits({ res_iron: ["iron"] });
 

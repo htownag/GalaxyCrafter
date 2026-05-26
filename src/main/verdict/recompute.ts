@@ -402,22 +402,28 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
   // ============================================================
   //
   // A raw slot on an active schematic is COVERED iff the player owns ≥1 unit
-  // of a fitting type with status `live` OR `reserved`. Despawned does NOT
-  // cover — despawned is a draining bucket and the whole point of UNLOCK is
-  // "you can't replenish this." See design-unlock-tier.md Q2 for the
-  // walkthrough that drove this decision.
+  // of a fitting type, REGARDLESS OF STATUS (live, reserved, OR despawned).
+  //
+  // v0.1.8 reverted the v0.1.6 "despawned doesn't cover" rule. The original
+  // call was that despawned is a draining bucket and UNLOCK should fire to
+  // remind the player to replenish. Real-world evidence contradicted it:
+  // Ryan's actual stashes are 30,000+ units of despawned material — orders
+  // of magnitude more than any single craft consumes. UNLOCK firing on
+  // those families just clutters the lane with spawns he doesn't need to
+  // grab. Listen to the user's actual usage > the hypothetical walkthrough.
+  //
+  // If "you should replenish drainable stashes" becomes important later,
+  // that's a separate REORDER lane (units-below-threshold), not an
+  // overload of UNLOCK. See design-unlock-tier.md §Q2 v0.1.8 errata.
   //
   // uncoveredSlots is the unique list of slots across all active schematics
   // that currently lack any covering inventory; UNLOCK fires on a candidate
   // resource iff its type fits at least one of these slots. The pure
   // coverage math lives in src/core/verdict/unlock.ts so it can be unit-
   // tested without a DB; this orchestrator just feeds it the inputs.
-  const coveringInventoryRows = inventoryRows.filter(
-    (i) => i.status === "live" || i.status === "reserved",
-  );
   const ownedResourceById = new Map(ownedResourceRows.map((r) => [r.id, r]));
   const coveringTypeIds = new Set<string>();
-  for (const inv of coveringInventoryRows) {
+  for (const inv of inventoryRows) {
     const ownedRow = ownedResourceById.get(inv.resourceId);
     if (ownedRow) coveringTypeIds.add(ownedRow.typeId);
   }

@@ -1,9 +1,16 @@
 // v0.1.6 UNLOCK — pure functions for slot coverage + per-resource unlock list.
 //
 // Coverage definition: a raw slot on an active schematic is COVERED iff
-// the player owns at least one resource (in live or reserved status) whose
-// type fits the slot's ingredient family. Despawned does NOT cover —
-// despawned is a draining bucket, not a refill source.
+// the player owns at least one resource of a fitting type, regardless of
+// inventory status (live, reserved, OR despawned).
+//
+// v0.1.8 note: an earlier rule (live + reserved only) was reverted after
+// real-world usage showed players holding many-tens-of-thousands of units
+// of despawned material — that's a stockpile they actively craft from,
+// not a soon-to-drain bucket. Treating it as uncovered made UNLOCK
+// fire constantly on families the player was already swimming in.
+// Replenishment of drainable stashes belongs in a future REORDER lane,
+// not in UNLOCK. See design-unlock-tier.md §Q2 errata for the reasoning.
 //
 // A spawning resource gets the UNLOCK flag iff it would cover at least one
 // currently-uncovered slot on any active schematic. UNLOCK is orthogonal to

@@ -160,15 +160,25 @@ If a player has 1 unit, they technically have it but can't actually craft an ite
 
 My instinct: **v1 = ≥1 unit counts as covered.** Adding STOCKPILE would require knowing per-schematic units required (we have that) AND tracking which schematic + how many crafts the player intends. Too many degrees of freedom for a first cut. Revisit after we see how UNLOCK alone performs.
 
-### Q2: Do despawned-only inventory rows count as covered? — FLIPPED after advisor review
+### Q2: Do despawned-only inventory rows count as covered? — RE-FLIPPED in v0.1.8
 
-**Original instinct (wrong):** count despawned as covered, defer the replenishment case to a separate REORDER tier.
+**v1 decision (v0.1.6, since reverted):** live + reserved count, despawned does NOT.
 
-**Walked-through counter-example (advisor):** Player has 50 units of `iron_dolovite` despawned a week ago. Slot accepts the iron family. Under "all-statuses-cover", that slot is COVERED → UNLOCK off. A fresh `iron_anaxite` (same family) spawns. With UNLOCK off the dashboard doesn't flag it. Player misses the spawn. *That's exactly the scenario Ryan is trying to solve* — Ryan's framing is "build the stockpile, even if not great. until i have good ones" which is fundamentally about **ongoing supply**, not point-in-time inventory.
+**Reasoning at the time** — captured here so the next person doesn't re-derive it:
+- Advisor-walkthrough hypothetical: 50 despawned units of `iron_dolovite`, craft uses 24 per pull. After two crafts the stash is empty and the player can't replenish — the spawn that could have replenished it (a fresh `iron_anaxite`) wasn't flagged because the slot looked "covered." Treating despawned as uncovered folded the REORDER case into UNLOCK naturally.
 
-**v1 decision:** Live + reserved count as covered. Despawned does NOT. Folds the would-be REORDER case into UNLOCK naturally — no second flag needed.
+**v0.1.8 reversal** — empirical evidence from Ryan's actual usage contradicted the hypothetical:
+- Ryan's despawned stashes are 30,000+ units per resource (caelatauite 30k, wodeian 91k, etc.) — not the hypothetical 50-unit-drains-in-a-week case
+- UNLOCK fired on families Ryan was already swimming in
+- "old stuff that i already have is not being factored in at all, that makes zero sense" (Ryan, 2026-05-26)
 
-Reserved is included because the player consciously earmarked those units; that's intent-tagging, not supply loss. They're not draining and they're not gone.
+The hypothetical premise (small stashes that drain quickly) was wrong for real-world stockpile sizes. Primary-source > advisor walkthrough.
+
+**v0.1.8 decision:** ALL statuses cover — live, reserved, AND despawned. UNLOCK fires only when the player owns literally zero of a fitting type.
+
+**Where REORDER goes:** if "you should replenish drainable stashes" matters later, it's a separate lane keyed off units-below-threshold + status==despawned. Not an overload of UNLOCK. Defer until evidence demands it.
+
+Reserved still counts (intent-tagged, never went away). Despawned now also counts (the player still has the units, period).
 
 ### Q3: Optional slots (ingredientType 3, 4)?
 
@@ -242,7 +252,7 @@ Before I code:
 
 - **Sub-component inheritance** — `src/main/ipc.ts:696-770` (`schematics:addActive`) auto-inserts inherited rows; `recompute.ts:110-191` iterates them. Sub-component raw slots flow into UNLOCK correctly.
 - **Recompute-on-inventory-change** — `src/main/ipc.ts:1236` (inventory:upsert) and `:1269` (inventory:remove) both call `recomputeForCharacter`. UNLOCK staleness is not a concern.
-- **Inventory status enum** — `live | despawned | reserved` (per `src/shared/ipc-types.ts:222`). The Q2 cover-set is `live ∪ reserved`.
+- **Inventory status enum** — `live | despawned | reserved` (per `src/shared/ipc-types.ts:222`). v0.1.8: cover-set is ALL statuses (was `live ∪ reserved` in v0.1.6/0.1.7; see Q2 errata).
 - **Owned-best-score code** — `recompute.ts:323-379` counts ALL statuses for `ownedBestScore` (quality comparison). That's correct for the existing CHASE/MAYBE delta math and stays unchanged. UNLOCK uses a *separate* filter.
 
 ## Workplan (v0.1.6)
