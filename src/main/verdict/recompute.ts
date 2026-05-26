@@ -22,6 +22,12 @@ import {
 } from "../../core/verdict/rollup";
 import { scoreGroup } from "../../core/verdict/score";
 import type { ResourceStats, ScoredMatch, StatWeight } from "../../core/verdict/types";
+import {
+  type ActiveSlot,
+  computeResourceUnlocks,
+  computeUncoveredSlots,
+  type UnlockEntry,
+} from "../../core/verdict/unlock";
 import { getDb } from "../../db";
 import {
   activeSchematics,
@@ -201,8 +207,15 @@ export interface RecomputeResult {
   inventoryEntries: number;
   /** Number of (resource × schematic × property-group) matches where scoreOwned > 0. */
   inventorySeededMatches: number;
+  /** v0.1.6: count of uncovered raw slots across active schematics (live+reserved inventory only). */
+  uncoveredSlots: number;
+  /** v0.1.6: count of verdict rows where unlocks_any=1. */
+  unlockResources: number;
   durationMs: number;
 }
+
+// UnlockEntry/ActiveSlot live in src/core/verdict/unlock.ts so the pure
+// coverage math can be unit-tested without a DB. Re-imported above.
 
 /**
  * Recompute and persist the full per-resource verdict set for one
@@ -241,6 +254,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       maybe: 0,
       inventoryEntries: 0,
       inventorySeededMatches: 0,
+      uncoveredSlots: 0,
+      unlockResources: 0,
       durationMs: Date.now() - start,
     };
   }
@@ -273,6 +288,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       maybe: 0,
       inventoryEntries: 0,
       inventorySeededMatches: 0,
+      uncoveredSlots: 0,
+      unlockResources: 0,
       durationMs: Date.now() - start,
     };
   }
@@ -295,6 +312,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       maybe: 0,
       inventoryEntries: 0,
       inventorySeededMatches: 0,
+      uncoveredSlots: 0,
+      unlockResources: 0,
       durationMs: Date.now() - start,
     };
   }
@@ -378,11 +397,56 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
     }
   }
 
+  // ============================================================
+  // v0.1.6 UNLOCK — per-character slot-coverage map
+  // ============================================================
+  //
+  // A raw slot on an active schematic is COVERED iff the player owns ≥1 unit
+  // of a fitting type with status `live` OR `reserved`. Despawned does NOT
+  // cover — despawned is a draining bucket and the whole point of UNLOCK is
+  // "you can't replenish this." See design-unlock-tier.md Q2 for the
+  // walkthrough that drove this decision.
+  //
+  // uncoveredSlots is the unique list of slots across all active schematics
+  // that currently lack any covering inventory; UNLOCK fires on a candidate
+  // resource iff its type fits at least one of these slots. The pure
+  // coverage math lives in src/core/verdict/unlock.ts so it can be unit-
+  // tested without a DB; this orchestrator just feeds it the inputs.
+  const coveringInventoryRows = inventoryRows.filter(
+    (i) => i.status === "live" || i.status === "reserved",
+  );
+  const ownedResourceById = new Map(ownedResourceRows.map((r) => [r.id, r]));
+  const coveringTypeIds = new Set<string>();
+  for (const inv of coveringInventoryRows) {
+    const ownedRow = ownedResourceById.get(inv.resourceId);
+    if (ownedRow) coveringTypeIds.add(ownedRow.typeId);
+  }
+
+  const allActiveSlots: ActiveSlot[] = [];
+  for (const ctx of activeCtx) {
+    for (const slot of ctx.rawSlots) {
+      allActiveSlots.push({
+        schematicId: ctx.schematicId,
+        schematicName: ctx.schematicName,
+        slotName: slot.slotName,
+        ingredientObject: slot.ingredientObject,
+      });
+    }
+  }
+  const fitsSlot = (typeId: string, ingredientObject: string): boolean =>
+    resourceTypeFitsRawSlot(typeId, ingredientObject, typeAncestors);
+  const uncoveredSlots: UnlockEntry[] = computeUncoveredSlots(
+    allActiveSlots,
+    coveringTypeIds,
+    fitsSlot,
+  );
+
   // Score every resource against every active-schematic scoring context.
   const verdictRows: Array<typeof verdicts.$inferInsert> = [];
   let chaseCount = 0;
   let maybeCount = 0;
   let invSeededMatches = 0; // count of matches where scoreOwned > 0 (diagnostic)
+  let unlockResourcesCount = 0;
   const now = Date.now();
 
   for (const r of resourceRows) {
@@ -419,21 +483,67 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
       }
     }
 
+    // v0.1.6 UNLOCK: which currently-uncovered slots does this resource fit?
+    // Computed independent of quality — a SKIP-tier resource still gets
+    // UNLOCK flagged. The list is persisted as JSON so the UI can show
+    // "this resource unlocks T21 Stock + DH17 Power Handler."
+    const unlocks = computeResourceUnlocks(r.typeId, uncoveredSlots, fitsSlot);
+    const unlocksAny = unlocks.length > 0;
+
     const verdict = rollupResourceVerdict(matches);
-    if (!verdict) continue;
-    if (verdict.tier === "CHASE") chaseCount++;
-    else if (verdict.tier === "MAYBE") maybeCount++;
-    verdictRows.push({
-      resourceId: r.id,
-      characterId,
-      snapshotId: latestSnapshot.id,
-      tier: verdict.tier,
-      reason: verdict.reason,
-      topScore: verdict.topScore,
-      matchedSchematicCount: verdict.matchedSchematicCount,
-      breakdownJson: JSON.stringify(verdict.breakdown),
-      computedAt: now,
-    });
+
+    // Three cases for whether to write a verdict row:
+    //   1. Rollup returns CHASE/MAYBE → always write.
+    //   2. Rollup returns null (resource didn't fit any slot OR all matches SKIP)
+    //      AND unlocksAny is true → write a SKIP-with-UNLOCK row so the UI can
+    //      surface the stockpile-builder case. Reason is UNLOCK-flavored.
+    //   3. Rollup returns null AND unlocksAny is false → skip, not on radar.
+    if (!verdict && !unlocksAny) continue;
+
+    if (verdict) {
+      if (verdict.tier === "CHASE") chaseCount++;
+      else if (verdict.tier === "MAYBE") maybeCount++;
+      if (unlocksAny) unlockResourcesCount++;
+      verdictRows.push({
+        resourceId: r.id,
+        characterId,
+        snapshotId: latestSnapshot.id,
+        tier: verdict.tier,
+        reason: verdict.reason,
+        topScore: verdict.topScore,
+        matchedSchematicCount: verdict.matchedSchematicCount,
+        breakdownJson: JSON.stringify(verdict.breakdown),
+        unlocksAny: unlocksAny ? 1 : 0,
+        unlocksJson: unlocksAny ? JSON.stringify(unlocks) : null,
+        computedAt: now,
+      });
+    } else {
+      // UNLOCK-only path: synthesize a SKIP row so the resource surfaces
+      // on UNLOCK-driven views (Dashboard "Unlocks needed" lane, Resources
+      // tab UNLOCK filter, Resource detail page). Tier stays SKIP because
+      // quality really is below thresholds; UNLOCK is the orthogonal lane.
+      unlockResourcesCount++;
+      const top = matches.length > 0 ? [...matches].sort((a, b) => b.score - a.score)[0] : null;
+      const matchedIds = new Set(matches.map((m) => m.schematicId));
+      const unlocksLabel =
+        unlocks.length === 1 ? "1 uncovered slot" : `${unlocks.length} uncovered slots`;
+      const reason = top
+        ? `${top.score.toFixed(1)} on ${top.schematicName} — UNLOCKS ${unlocksLabel}`
+        : `UNLOCKS ${unlocksLabel}`;
+      verdictRows.push({
+        resourceId: r.id,
+        characterId,
+        snapshotId: latestSnapshot.id,
+        tier: "SKIP",
+        reason,
+        topScore: top?.score ?? 0,
+        matchedSchematicCount: matchedIds.size,
+        breakdownJson: JSON.stringify(matches),
+        unlocksAny: 1,
+        unlocksJson: JSON.stringify(unlocks),
+        computedAt: now,
+      });
+    }
   }
 
   // Atomic swap: clear current-snapshot verdicts, insert new. The transaction
@@ -457,6 +567,8 @@ export function recomputeVerdicts(characterId: string): RecomputeResult {
     maybe: maybeCount,
     inventoryEntries: inventoryRows.length,
     inventorySeededMatches: invSeededMatches,
+    uncoveredSlots: uncoveredSlots.length,
+    unlockResources: unlockResourcesCount,
     durationMs: Date.now() - start,
   };
 }

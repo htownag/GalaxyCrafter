@@ -14,14 +14,23 @@ import { useActiveCharacter } from "../hooks/useActiveCharacter";
 
 type SortKey = "verdict" | "name" | "type" | "group" | StatKey;
 type SortDir = "asc" | "desc";
-type VerdictFilter = "CHASE" | "MAYBE" | "OWNED" | "NONE";
-const ALL_FILTERS: VerdictFilter[] = ["CHASE", "MAYBE", "OWNED", "NONE"];
+type VerdictFilter = "CHASE" | "UNLOCK" | "MAYBE" | "OWNED" | "NONE";
+const ALL_FILTERS: VerdictFilter[] = ["CHASE", "UNLOCK", "MAYBE", "OWNED", "NONE"];
 
-// Sort key for the verdict column. CHASE > MAYBE > OWNED > none. OWNED
-// outranks "no verdict" (informational, you have it) but trails the
-// chase signals (which are higher-urgency). Within tier, higher topScore
-// wins for verdicted entries; OWNED rows sub-sort by total units desc.
+// Sort key for the verdict column. v0.1.6 priority order per Ryan's exact
+// framing ("doesn't matter if it sucks, it's my first"):
+// UNLOCK+CHASE > UNLOCK alone > CHASE alone > OWNED > MAYBE > none.
+// Within a tier, higher topScore wins; OWNED rows sub-sort by units desc.
+//
+// Worth noting: a SKIP+UNLOCK with topScore=0 (4000) STILL outranks a
+// CHASE-alone with topScore=95 (3095). This is deliberate — Ryan's
+// instruction is that an uncovered slot trumps a quality upgrade, since
+// you can't craft at all without coverage. Not a bug; matches the design
+// doc decision and the release notes.
 function verdictSortValue(v: VerdictEntry | undefined, inv: InventoryEntry | undefined): number {
+  const isUnlock = v?.unlocksAny ?? false;
+  if (v && v.tier === "CHASE" && isUnlock) return 5000 + v.topScore; // best of both
+  if (isUnlock) return 4000 + (v?.topScore ?? 0); // UNLOCK alone — stockpile builder
   if (v && v.tier === "CHASE") return 3000 + v.topScore;
   if (v && v.tier === "MAYBE") return 2000 + v.topScore;
   if (inv) return 1000 + Math.min(999, Math.log10(Math.max(1, inv.units)) * 100);
@@ -41,6 +50,24 @@ function VerdictPill({ verdict }: { verdict: VerdictEntry }): JSX.Element {
       title={verdict.reason}
     >
       {verdict.tier}
+    </span>
+  );
+}
+
+// v0.1.6: UNLOCK badge — orthogonal to tier. Yellow/gold to stay distinct
+// from emerald (CHASE), amber (MAYBE), and cyan (OWNED). Tooltip lists the
+// schematics whose slot this resource would cover, so the player can see at
+// a glance "this is the first chromium aluminum, fills T21 Stock + DH17."
+function UnlockBadge({ verdict }: { verdict: VerdictEntry }): JSX.Element | null {
+  if (!verdict.unlocksAny) return null;
+  const lines = verdict.unlocks.map((u) => `${u.schematicName} — ${u.slotName}`);
+  const title = `UNLOCKS ${verdict.unlocks.length} slot${verdict.unlocks.length === 1 ? "" : "s"}:\n${lines.join("\n")}`;
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium bg-yellow-900/50 border-yellow-700 text-yellow-200"
+      title={title}
+    >
+      UNLOCK
     </span>
   );
 }
@@ -218,8 +245,9 @@ export function Resources(): JSX.Element {
     }
   }
 
-  // What chip category does each resource fall into? OWNED supersedes
-  // verdict tier (an owned MAYBE is shown as OWNED, not MAYBE — see D1A).
+  // What primary chip category does each resource fall into? OWNED
+  // supersedes verdict tier (an owned MAYBE is shown as OWNED, not MAYBE —
+  // see D1A). UNLOCK is orthogonal — checked separately.
   function categoryFor(resourceId: string): VerdictFilter {
     if (inventoryById.has(resourceId)) return "OWNED";
     const v = verdictsById.get(resourceId);
@@ -232,9 +260,18 @@ export function Resources(): JSX.Element {
     let list = resources;
     if (character) {
       // Apply chip filter only when there's a character (otherwise the
-      // OWNED / verdict categories are meaningless). Empty active set =
-      // hide everything (nothing matches no-active filters).
-      list = list.filter((r) => activeFilters.has(categoryFor(r.id)));
+      // OWNED / verdict categories are meaningless). Filters are a UNION:
+      // a row passes if it matches the active CHASE/MAYBE/OWNED/NONE
+      // category OR (separately) if UNLOCK is toggled and the row has
+      // unlocksAny=true. Lets a player toggle UNLOCK on/off independently
+      // from "show only quality CHASE."
+      list = list.filter((r) => {
+        const v = verdictsById.get(r.id);
+        const cat = categoryFor(r.id);
+        const matchesCategory = activeFilters.has(cat);
+        const matchesUnlock = activeFilters.has("UNLOCK") && v?.unlocksAny === true;
+        return matchesCategory || matchesUnlock;
+      });
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -345,6 +382,12 @@ export function Resources(): JSX.Element {
                     ).length}
                   </span>
                   {" CHASE / "}
+                  <span className="text-yellow-300">
+                    {Array.from(verdictsById.values()).filter(
+                      (v) => v.unlocksAny && !inventoryById.has(v.resourceId),
+                    ).length}
+                  </span>
+                  {" UNLOCK / "}
                   <span className="text-amber-300">
                     {Array.from(verdictsById.values()).filter(
                       (v) => v.tier === "MAYBE" && !inventoryById.has(v.resourceId),
@@ -404,11 +447,13 @@ export function Resources(): JSX.Element {
                 const baseCls = on
                   ? f === "CHASE"
                     ? "bg-emerald-900/60 border-emerald-700 text-emerald-200"
-                    : f === "MAYBE"
-                      ? "bg-amber-900/50 border-amber-700 text-amber-200"
-                      : f === "OWNED"
-                        ? "bg-cyan-900/40 border-cyan-700 text-cyan-200"
-                        : "bg-slate-800 border-slate-700 text-slate-300"
+                    : f === "UNLOCK"
+                      ? "bg-yellow-900/50 border-yellow-700 text-yellow-200"
+                      : f === "MAYBE"
+                        ? "bg-amber-900/50 border-amber-700 text-amber-200"
+                        : f === "OWNED"
+                          ? "bg-cyan-900/40 border-cyan-700 text-cyan-200"
+                          : "bg-slate-800 border-slate-700 text-slate-300"
                   : "bg-transparent border-slate-700 text-slate-500 hover:text-slate-300";
                 return (
                   <button
@@ -511,13 +556,17 @@ export function Resources(): JSX.Element {
                             {/* OWNED supersedes verdict pill — Ryan's D1A: */}
                             {/* "already have this, but if nothing else can get */}
                             {/* more of it." */}
-                            {inv ? (
-                              <OwnedTag entry={inv} />
-                            ) : v ? (
-                              <VerdictPill verdict={v} />
-                            ) : (
-                              <span className="text-slate-700">—</span>
-                            )}
+                            {/* UNLOCK is orthogonal — stacks below tier/owned. */}
+                            <span className="inline-flex flex-col items-start gap-1">
+                              {inv ? (
+                                <OwnedTag entry={inv} />
+                              ) : v ? (
+                                <VerdictPill verdict={v} />
+                              ) : !v?.unlocksAny ? (
+                                <span className="text-slate-700">—</span>
+                              ) : null}
+                              {v && <UnlockBadge verdict={v} />}
+                            </span>
                           </td>
                         )}
                         <td className="px-3 py-2 font-mono">

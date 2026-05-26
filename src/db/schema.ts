@@ -254,6 +254,12 @@ export const verdicts = sqliteTable(
     topScore: real("top_score").notNull(), // max score across matched schematics — for sorting
     matchedSchematicCount: integer("matched_schematic_count").notNull().default(0),
     breakdownJson: text("breakdown_json"), // full per-(schematic, group) detail; Phase 5 UI consumes this
+    // v0.1.6 UNLOCK flag — orthogonal to tier. True when this resource would
+    // cover at least one currently-uncovered raw slot on an active schematic
+    // (live + reserved inventory only — despawned is a draining bucket).
+    // unlocks_json carries the per-(schematic, slot) detail for the UI.
+    unlocksAny: integer("unlocks_any").notNull().default(0), // 0 / 1 boolean
+    unlocksJson: text("unlocks_json"), // JSON: Array<{schematicId, schematicName, slotName, ingredientObject}>
     computedAt: integer("computed_at").notNull(),
   },
   (t) => ({

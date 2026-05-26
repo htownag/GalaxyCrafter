@@ -4,6 +4,7 @@ import type {
   DashboardData,
   DashboardSbCard,
   DashboardSchematicReadiness,
+  DashboardUnlockCard,
   DashboardVerdictCard,
 } from "@shared/ipc-types";
 import { PROFESSIONS } from "@shared/professions";
@@ -131,9 +132,9 @@ export function Dashboard(): JSX.Element {
           </p>
         </div>
         <div className="text-xs text-slate-500">
-          {data.rightNow.length} CHASE · {data.onWatch.length} MAYBE ·{" "}
-          {data.sbCollection.length} SB · {data.inventoryHealth.craftableNow}/
-          {data.inventoryHealth.activeSchematicCount} craftable
+          {data.rightNow.length} CHASE · {data.unlocksNeeded.length} UNLOCK ·{" "}
+          {data.onWatch.length} MAYBE · {data.sbCollection.length} SB ·{" "}
+          {data.inventoryHealth.craftableNow}/{data.inventoryHealth.activeSchematicCount} craftable
         </div>
       </header>
 
@@ -186,7 +187,7 @@ export function Dashboard(): JSX.Element {
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
         <Lane
           title="Right Now"
           subtitle={`${data.rightNow.length} CHASE-tier`}
@@ -197,6 +198,26 @@ export function Dashboard(): JSX.Element {
           ))}
         </Lane>
 
+        {/* v0.1.6 UNLOCK lane — stockpile-builder spawns for slots you don't
+            yet cover. Quality is secondary here; "doesn't matter if it
+            sucks, it's my first." Sits next to Right Now because UNLOCK +
+            CHASE is the strictly-best card (top of the priority order). */}
+        <Lane
+          title="Unlocks needed"
+          subtitle={
+            data.unlocksNeeded.length === 0
+              ? "all slots covered"
+              : `${data.unlocksNeeded.length} stockpile builder${data.unlocksNeeded.length === 1 ? "" : "s"}`
+          }
+          empty="All your tracked schematics have at least one covering resource (live or reserved). Despawned-only stashes still trigger UNLOCK when a fresh spawn appears."
+        >
+          {data.unlocksNeeded.map((c) => (
+            <UnlockCard key={c.resourceId} card={c} />
+          ))}
+        </Lane>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
         <Lane
           title="On Watch"
           subtitle={`${data.onWatch.length} MAYBE-tier`}
@@ -293,6 +314,61 @@ function VerdictCard({
       )}
       <div className="text-[10px] text-slate-500 truncate" title={card.reason}>
         {card.reason}
+      </div>
+      <div className="text-[10px] text-slate-600 mt-0.5 truncate">
+        {card.planets.join(", ")}
+      </div>
+    </Link>
+  );
+}
+
+function UnlockCard({ card }: { card: DashboardUnlockCard }): JSX.Element {
+  // Yellow / amber family — distinct from emerald CHASE and purple SB.
+  // The badge cluster shows tier (CHASE/MAYBE/SKIP for context, optional)
+  // alongside the prominent UNLOCK marker. Tooltip lists the schematic+slot
+  // tuples this resource would cover.
+  const tierColor = TIER_COLOR[card.tier] ?? TIER_COLOR.SKIP;
+  return (
+    <Link
+      to={`/resources/${card.resourceId}`}
+      className="block rounded-md border border-yellow-900/60 bg-yellow-950/10 hover:border-yellow-700 transition-colors p-2"
+    >
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <span className="text-sm text-yellow-200 font-medium truncate">
+          {card.resourceName}
+        </span>
+        <span className="px-1.5 py-0.5 rounded border text-[10px] font-mono bg-yellow-900/50 border-yellow-700 text-yellow-200">
+          UNLOCK ×{card.unlocksCount}
+        </span>
+      </div>
+      <div className="text-[11px] text-slate-400 truncate mb-1">
+        {card.typeDisplayName}
+        <span
+          className={`ml-2 px-1 py-0.5 rounded border text-[9px] font-mono ${tierColor}`}
+        >
+          {card.tier} {Math.round(card.topScore)}
+        </span>
+      </div>
+      {card.topStats.length > 0 && (
+        <div className="text-[11px] text-slate-300 mb-1 font-mono">
+          {card.topStats.map((s) => `${s.stat} ${s.value}`).join(" · ")}
+        </div>
+      )}
+      <div
+        className="text-[10px] text-yellow-300/80 truncate"
+        title={card.unlocksPreview
+          .map((u) => `${u.schematicName} — ${u.slotName}`)
+          .join("\n")}
+      >
+        {card.unlocksPreview.length > 0 ? (
+          <>
+            unlocks: {card.unlocksPreview.map((u) => u.schematicName).join(", ")}
+            {card.unlocksCount > card.unlocksPreview.length &&
+              ` + ${card.unlocksCount - card.unlocksPreview.length} more`}
+          </>
+        ) : (
+          <>— uncovered slots —</>
+        )}
       </div>
       <div className="text-[10px] text-slate-600 mt-0.5 truncate">
         {card.planets.join(", ")}

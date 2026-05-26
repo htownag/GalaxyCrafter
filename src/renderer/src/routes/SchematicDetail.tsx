@@ -129,6 +129,35 @@ export function SchematicDetail(): JSX.Element {
                 <span className="text-slate-300 font-mono">{detail.skillGroup}</span>
               </span>
             )}
+            {/* v0.1.6 UNLOCK header pill: X/Y slots covered by inventory.
+                Null when no active character. Green when fully covered,
+                amber when partial, yellow (UNLOCK-flavored) when zero. */}
+            {detail.rawSlotsCovered !== null && detail.rawSlotsTotal > 0 && (() => {
+              const c = detail.rawSlotsCovered;
+              const t = detail.rawSlotsTotal;
+              const missing = t - c;
+              const cls =
+                missing === 0
+                  ? "bg-emerald-900/50 border-emerald-700 text-emerald-200"
+                  : c === 0
+                    ? "bg-yellow-900/50 border-yellow-700 text-yellow-200"
+                    : "bg-amber-900/50 border-amber-700 text-amber-200";
+              return (
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-medium ${cls}`}
+                  title={
+                    missing === 0
+                      ? "All raw slots covered by your live or reserved inventory"
+                      : `${missing} raw slot${missing === 1 ? "" : "s"} need a covering resource (live + reserved only — despawned doesn't count)`
+                  }
+                >
+                  {c}/{t} slots covered
+                  {missing > 0 && (
+                    <span className="ml-1 opacity-80">— {missing} unlock{missing === 1 ? "" : "s"} needed</span>
+                  )}
+                </span>
+              );
+            })()}
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -609,24 +638,32 @@ function CraftingPlanRow({ slot }: { slot: CraftRecommendSlotResult }): JSX.Elem
   }
 
   if (!slot.bestOwned) {
+    // v0.1.6 UNLOCK framing: the slot is uncovered, so any spawn is a
+    // stockpile-builder, not a quality upgrade. Yellow UNLOCK badge + label
+    // so the player sees "grab this — it's my first" not "chase this for
+    // quality."
     return (
-      <tr className="border-t border-slate-700">
+      <tr className="border-t border-yellow-900/40 bg-yellow-950/10">
         <td className="px-2 py-1.5">
           <span className="text-slate-200 text-xs">{humaniseSlotName(slot.slotName)}</span>
           <span className="ml-1 text-[10px] text-slate-500 font-mono">
             {slot.unitsRequired}u · {slot.ingredientDisplayName ?? slot.ingredientObject}
           </span>
         </td>
-        <td className="px-2 py-1.5 text-xs text-amber-400" colSpan={3}>
-          — none in inventory —
+        <td className="px-2 py-1.5 text-xs" colSpan={3}>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md border text-[10px] font-medium bg-yellow-900/50 border-yellow-700 text-yellow-200 mr-2">
+            UNLOCK
+          </span>
+          <span className="text-yellow-300/80">no covering inventory</span>
         </td>
         <td className="px-2 py-1.5 text-xs">
           {slot.bestSpawning ? (
-            <span className="text-emerald-300">
-              CHASE: {slot.bestSpawning.resourceName} ({slot.bestSpawning.score.toFixed(1)})
+            <span className="text-yellow-200">
+              <span className="font-medium">grab any spawn:</span>{" "}
+              {slot.bestSpawning.resourceName} ({slot.bestSpawning.score.toFixed(1)})
             </span>
           ) : (
-            <span className="text-slate-500">—</span>
+            <span className="text-slate-500">no current spawns either</span>
           )}
         </td>
       </tr>

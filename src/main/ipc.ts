@@ -87,6 +87,7 @@ import type {
   DashboardInventoryHealth,
   DashboardSbCard,
   DashboardSchematicReadiness,
+  DashboardUnlockCard,
   DashboardVerdictCard,
   PlannerInput,
   PlannerRecommendation,
@@ -103,6 +104,7 @@ import type {
   SimulatorSlotOption,
   SnapshotIngestEvent,
   StatKey,
+  UnlockSlot,
   VerdictThresholdsView,
 } from "../shared/ipc-types";
 
@@ -156,6 +158,11 @@ function formatInvSuffix(inventoryEntries: number, inventorySeededMatches: numbe
     : " · empty inventory (Phase 3 thresholds)";
 }
 
+function formatUnlockSuffix(uncoveredSlots: number, unlockResources: number): string {
+  if (uncoveredSlots === 0) return "";
+  return ` · ${uncoveredSlots} uncovered slot${uncoveredSlots === 1 ? "" : "s"}, ${unlockResources} UNLOCK resource${unlockResources === 1 ? "" : "s"}`;
+}
+
 interface GalaxyRecomputeStats {
   totalChase: number;
   totalMaybe: number;
@@ -172,7 +179,7 @@ function recomputeForGalaxy(galaxyId: number): GalaxyRecomputeStats {
     try {
       const result = recomputeVerdicts(c.id);
       console.log(
-        `[verdict] ${c.name} (galaxy ${galaxyId}): ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored${formatInvSuffix(result.inventoryEntries, result.inventorySeededMatches)} in ${result.durationMs}ms`,
+        `[verdict] ${c.name} (galaxy ${galaxyId}): ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored${formatInvSuffix(result.inventoryEntries, result.inventorySeededMatches)}${formatUnlockSuffix(result.uncoveredSlots, result.unlockResources)} in ${result.durationMs}ms`,
       );
       totalChase += result.chase;
       totalMaybe += result.maybe;
@@ -193,7 +200,7 @@ function recomputeForCharacter(characterId: string): void {
   try {
     const result = recomputeVerdicts(characterId);
     console.log(
-      `[verdict] character ${characterId}: ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored${formatInvSuffix(result.inventoryEntries, result.inventorySeededMatches)} in ${result.durationMs}ms`,
+      `[verdict] character ${characterId}: ${result.chase} CHASE / ${result.maybe} MAYBE / ${result.resourcesScored} scored${formatInvSuffix(result.inventoryEntries, result.inventorySeededMatches)}${formatUnlockSuffix(result.uncoveredSlots, result.unlockResources)} in ${result.durationMs}ms`,
     );
     emitVerdictsUpdated(characterId);
   } catch (e) {
@@ -544,6 +551,58 @@ export function registerIpc(): void {
           .get() !== undefined
       : false;
 
+    // v0.1.6 UNLOCK header pill: "X/Y slots covered" for the active
+    // character's live + reserved inventory. Null when no active character.
+    // We compute per-(slot, family) coverage using the existing IFF compat
+    // map (same as recompute.ts); despawned does NOT cover.
+    const rawSlots = slotsRows.filter((sl) => sl.ingredientType === 0);
+    let rawSlotsCovered: number | null = null;
+    const rawSlotsTotal = rawSlots.length;
+    if (activeCharId && rawSlotsTotal > 0) {
+      const invRows = db
+        .select()
+        .from(inventoryEntries)
+        .where(
+          and(
+            eq(inventoryEntries.characterId, activeCharId),
+            inArray(inventoryEntries.status, ["live", "reserved"]),
+          ),
+        )
+        .all();
+      if (invRows.length === 0) {
+        rawSlotsCovered = 0;
+      } else {
+        const invResourceIds = invRows.map((i) => i.resourceId);
+        const invResourceRows = db
+          .select()
+          .from(resources)
+          .where(inArray(resources.id, invResourceIds))
+          .all();
+        const coveringTypeIds = Array.from(new Set(invResourceRows.map((r) => r.typeId)));
+        // Pull type-ancestor edges for the union of covering types + each
+        // raw slot's ingredient (which may be a group id, hence not in the
+        // type table directly — but resourceTypeFitsRawSlot handles the
+        // group-vs-type distinction via the ancestor map).
+        const tgEdges =
+          coveringTypeIds.length > 0
+            ? db
+                .select()
+                .from(resourceTypeGroups)
+                .where(inArray(resourceTypeGroups.typeId, coveringTypeIds))
+                .all()
+            : [];
+        const typeAncestors = buildTypeAncestorMap(tgEdges);
+        let coveredCount = 0;
+        for (const slot of rawSlots) {
+          const covered = coveringTypeIds.some((typeId) =>
+            resourceTypeFitsRawSlot(typeId, slot.ingredientObject, typeAncestors),
+          );
+          if (covered) coveredCount++;
+        }
+        rawSlotsCovered = coveredCount;
+      }
+    }
+
     // Resolve display names for each slot's `ingredientObject`. Raw-resource
     // slots (type 0) reference a resource group or specific type ID; look
     // those up in the reference data so the UI shows "Diatium Copper"
@@ -644,6 +703,8 @@ export function registerIpc(): void {
         childName: childNamesById.get(d.childSchematicId) ?? d.childSchematicId,
       })),
       isActive,
+      rawSlotsCovered,
+      rawSlotsTotal,
     };
   });
 
@@ -820,13 +881,28 @@ export function registerIpc(): void {
       .from(verdicts)
       .where(and(eq(verdicts.characterId, characterId), eq(verdicts.snapshotId, latest.id)))
       .all();
-    return rows.map((r) => ({
-      resourceId: r.resourceId,
-      tier: r.tier as VerdictEntry["tier"],
-      reason: r.reason ?? "",
-      topScore: r.topScore,
-      matchedSchematicCount: r.matchedSchematicCount,
-    }));
+    return rows.map((r) => {
+      // v0.1.6 UNLOCK fields. unlocksJson may be null on legacy rows
+      // (pre-migration) — defensively parse and default to empty.
+      let unlocks: VerdictEntry["unlocks"] = [];
+      if (r.unlocksJson) {
+        try {
+          const parsed = JSON.parse(r.unlocksJson);
+          if (Array.isArray(parsed)) unlocks = parsed;
+        } catch {
+          // Bad JSON — leave empty. The next recompute will rewrite the row.
+        }
+      }
+      return {
+        resourceId: r.resourceId,
+        tier: r.tier as VerdictEntry["tier"],
+        reason: r.reason ?? "",
+        topScore: r.topScore,
+        matchedSchematicCount: r.matchedSchematicCount,
+        unlocksAny: r.unlocksAny === 1,
+        unlocks,
+      };
+    });
   });
 
   ipcMain.handle("sbFlags:list", async (_evt, galaxyId: number): Promise<SbFlagEntry[]> => {
@@ -905,12 +981,24 @@ export function registerIpc(): void {
                 console.warn(`[resources:detail] failed to parse breakdown for ${r.id}:`, e);
               }
             }
+            // v0.1.6 UNLOCK: parse the unlocks list (per-(schematic, slot) detail).
+            let unlocks: NonNullable<ResourceDetail["verdict"]>["unlocks"] = [];
+            if (v.unlocksJson) {
+              try {
+                const parsed = JSON.parse(v.unlocksJson);
+                if (Array.isArray(parsed)) unlocks = parsed;
+              } catch (e) {
+                console.warn(`[resources:detail] failed to parse unlocks for ${r.id}:`, e);
+              }
+            }
             verdictView = {
               tier: v.tier as VerdictTier,
               reason: v.reason ?? "",
               topScore: v.topScore,
               matchedSchematicCount: v.matchedSchematicCount,
               breakdown,
+              unlocksAny: v.unlocksAny === 1,
+              unlocks,
             };
           }
         }
@@ -2295,6 +2383,32 @@ export function registerDashboardHandler(): void {
         .filter((v) => v.tier === "MAYBE")
         .sort((a, b) => b.topScore - a.topScore)
         .slice(0, 10);
+      // v0.1.6 UNLOCK lane — every verdict with unlocksAny=1, sorted by
+      // number of slots unlocked desc, then topScore desc as tiebreaker.
+      // We sort by uncovered-slot count first because the player's primary
+      // need is breadth of coverage (more slots = more crafts unblocked),
+      // not single-craft quality. Top 10 fits the lane budget.
+      type UnlockRow = (typeof verdictRows)[number] & { unlocksCount: number };
+      const unlocksAll: UnlockRow[] = verdictRows
+        .filter((v) => v.unlocksAny === 1)
+        .map((v): UnlockRow => {
+          let count = 0;
+          if (v.unlocksJson) {
+            try {
+              const parsed = JSON.parse(v.unlocksJson);
+              if (Array.isArray(parsed)) count = parsed.length;
+            } catch {
+              // ignore — count stays 0
+            }
+          }
+          return { ...v, unlocksCount: count };
+        });
+      const unlocks = unlocksAll
+        .sort((a, b) => {
+          if (a.unlocksCount !== b.unlocksCount) return b.unlocksCount - a.unlocksCount;
+          return b.topScore - a.topScore;
+        })
+        .slice(0, 10);
 
       // SB flags for character's primary/secondary professions on the
       // latest snapshot, weighted (primary 1.0 / secondary 0.5) × tier mult
@@ -2332,11 +2446,12 @@ export function registerDashboardHandler(): void {
         .sort((a, b) => b.sortKey - a.sortKey)
         .slice(0, 10);
 
-      // Load the union of resources referenced by all three lanes + planets.
+      // Load the union of resources referenced by all four lanes + planets.
       const cardResourceIds = Array.from(
         new Set([
           ...chase.map((v) => v.resourceId),
           ...maybe.map((v) => v.resourceId),
+          ...unlocks.map((v) => v.resourceId),
           ...sbTop.map((s) => s.row.resourceId),
         ]),
       );
@@ -2399,6 +2514,37 @@ export function registerDashboardHandler(): void {
 
       const rightNow = chase.map(buildCard).filter((c): c is DashboardVerdictCard => c !== null);
       const onWatch = maybe.map(buildCard).filter((c): c is DashboardVerdictCard => c !== null);
+
+      // v0.1.6 UNLOCK card builder. Decodes the per-slot JSON, takes the
+      // first 3 entries for the card subtitle (the full list lives on the
+      // resource detail page).
+      const buildUnlockCard = (v: UnlockRow): DashboardUnlockCard | null => {
+        const r = resourceById.get(v.resourceId);
+        if (!r) return null;
+        let allUnlocks: UnlockSlot[] = [];
+        if (v.unlocksJson) {
+          try {
+            const parsed = JSON.parse(v.unlocksJson);
+            if (Array.isArray(parsed)) allUnlocks = parsed;
+          } catch {
+            // ignore
+          }
+        }
+        return {
+          resourceId: r.id,
+          resourceName: r.name,
+          typeDisplayName: typeNameById.get(r.typeId) ?? r.typeId,
+          planets: planetsByResource.get(r.id) ?? [],
+          topStats: topStatsOf(r),
+          tier: v.tier as DashboardUnlockCard["tier"],
+          topScore: v.topScore,
+          unlocksCount: v.unlocksCount,
+          unlocksPreview: allUnlocks.slice(0, 3),
+        };
+      };
+      const unlocksNeeded = unlocks
+        .map(buildUnlockCard)
+        .filter((c): c is DashboardUnlockCard => c !== null);
 
       const sbCollection: DashboardSbCard[] = sbTop
         .map((x) => {
@@ -2534,6 +2680,7 @@ export function registerDashboardHandler(): void {
         characterName: character.name,
         galaxyId: character.galaxyId,
         rightNow,
+        unlocksNeeded,
         onWatch,
         sbCollection,
         inventoryHealth,

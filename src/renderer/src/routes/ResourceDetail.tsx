@@ -173,11 +173,22 @@ export function ResourceDetail(): JSX.Element {
 
         {detail.verdict && (
           <div className="flex flex-col items-end gap-1">
-            <span
-              className={`inline-flex items-center px-3 py-1 rounded-md border text-sm font-medium ${TIER_PILL[detail.verdict.tier]}`}
-            >
-              {detail.verdict.tier}
-            </span>
+            <div className="flex items-center gap-1">
+              <span
+                className={`inline-flex items-center px-3 py-1 rounded-md border text-sm font-medium ${TIER_PILL[detail.verdict.tier]}`}
+              >
+                {detail.verdict.tier}
+              </span>
+              {/* v0.1.6 UNLOCK badge — orthogonal to tier. */}
+              {detail.verdict.unlocksAny && (
+                <span
+                  className="inline-flex items-center px-3 py-1 rounded-md border text-sm font-medium bg-yellow-900/50 border-yellow-700 text-yellow-200"
+                  title={`UNLOCKS ${detail.verdict.unlocks.length} slot${detail.verdict.unlocks.length === 1 ? "" : "s"} you can't currently cover`}
+                >
+                  UNLOCK
+                </span>
+              )}
+            </div>
             <span className="text-xs text-slate-400 tabular-nums">
               top score {detail.verdict.topScore.toFixed(1)}
             </span>
@@ -189,6 +200,54 @@ export function ResourceDetail(): JSX.Element {
         <h3 className="text-sm font-medium text-slate-300 mb-3">Stats</h3>
         <StatPanel stats={detail.stats} caps={detail.caps} floors={detail.floors} />
       </section>
+
+      {/* v0.1.6 UNLOCK section — surface the per-schematic / slot detail so
+          the player can navigate to the schematic that needs this resource. */}
+      {detail.verdict?.unlocksAny && detail.verdict.unlocks.length > 0 && (
+        <section className="mb-8">
+          <h3 className="text-sm font-medium text-yellow-300 mb-2">
+            This resource UNLOCKS — {detail.verdict.unlocks.length} slot
+            {detail.verdict.unlocks.length === 1 ? "" : "s"} you can't currently cover
+          </h3>
+          <p className="text-xs text-slate-400 mb-2">
+            Tracked schematics with a raw slot this resource fits, where you
+            don't yet own any covering resource (live or reserved). Grab any
+            spawn — even a low-quality one — to unblock the craft.
+          </p>
+          <div className="overflow-x-auto rounded-md border border-yellow-900/50">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800 text-slate-300">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Schematic</th>
+                  <th className="px-3 py-2 text-left font-medium">Slot</th>
+                  <th className="px-3 py-2 text-left font-medium">Ingredient family</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.verdict.unlocks.map((u) => (
+                  <tr
+                    key={`${u.schematicId}|${u.slotName}`}
+                    className="border-t border-slate-700 hover:bg-slate-800/50"
+                  >
+                    <td className="px-3 py-2">
+                      <Link
+                        to={`/schematics/${encodeURIComponent(u.schematicId)}`}
+                        className="text-yellow-200 hover:text-yellow-100"
+                      >
+                        {u.schematicName}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2 text-slate-200">{u.slotName}</td>
+                    <td className="px-3 py-2 text-slate-400 font-mono text-xs">
+                      {u.ingredientObject}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {detail.sbFlags.length > 0 && (
         <section className="mb-8">

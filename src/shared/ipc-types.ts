@@ -198,6 +198,14 @@ export interface SchematicDetail {
   propertyGroups: SchematicPropertyGroupDetail[];
   dependencies: SchematicDependencyDetail[];
   isActive: boolean;
+  /**
+   * v0.1.6 UNLOCK header pill: of this schematic's raw slots (ingredientType=0),
+   * how many are currently covered by the active character's live+reserved
+   * inventory. Null when no active character.
+   */
+  rawSlotsCovered: number | null;
+  /** Total raw slots count for the X/Y pill. */
+  rawSlotsTotal: number;
 }
 
 export interface ActiveSchematicEntry {
@@ -545,11 +553,34 @@ export interface DashboardInventoryHealth {
   topSchematics: DashboardSchematicReadiness[];
 }
 
+/**
+ * v0.1.6: Dashboard "Unlocks needed" card. A spawning resource the player
+ * doesn't yet own a covering counterpart for, on at least one tracked
+ * schematic. Quality is secondary — these surface so the player builds the
+ * stockpile, not the upgrade.
+ */
+export interface DashboardUnlockCard {
+  resourceId: string;
+  resourceName: string;
+  typeDisplayName: string;
+  planets: string[];
+  topStats: Array<{ stat: StatKey; value: number }>;
+  /** The verdict tier for context — may be CHASE/MAYBE/SKIP. */
+  tier: VerdictTier;
+  topScore: number;
+  /** Count of currently-uncovered slots this resource fills. */
+  unlocksCount: number;
+  /** First 3 (schematic, slot) tuples for the card's subtitle. */
+  unlocksPreview: UnlockSlot[];
+}
+
 export interface DashboardData {
   characterName: string;
   galaxyId: number;
   /** Top 5 CHASE-tier resources, score-desc. */
   rightNow: DashboardVerdictCard[];
+  /** v0.1.6: Top UNLOCK resources, sorted by uncovered-slot count desc then quality. */
+  unlocksNeeded: DashboardUnlockCard[];
   /** Top 10 MAYBE-tier resources, score-desc. */
   onWatch: DashboardVerdictCard[];
   /** SB flags for character's primary + secondary profs, weighted, top 10. */
@@ -731,12 +762,33 @@ export interface PlannerResult {
 
 export type VerdictTier = "CHASE" | "MAYBE" | "SKIP";
 
+/**
+ * v0.1.6 UNLOCK: one currently-uncovered raw slot this resource fits.
+ * Surfaced in the Resource Detail "This resource UNLOCKS" section, the
+ * Dashboard "Unlocks needed" lane, and the Schematic Detail header.
+ */
+export interface UnlockSlot {
+  schematicId: string;
+  schematicName: string;
+  slotName: string;
+  ingredientObject: string;
+}
+
 export interface VerdictEntry {
   resourceId: string;
   tier: VerdictTier;
   reason: string;
   topScore: number;
   matchedSchematicCount: number;
+  /**
+   * v0.1.6: True when this resource would cover ≥1 currently-uncovered raw
+   * slot on an active schematic (live + reserved inventory only). Orthogonal
+   * to tier — a SKIP-tier resource can still have unlocksAny=true and is
+   * surfaced via the UNLOCK lane / badge.
+   */
+  unlocksAny: boolean;
+  /** v0.1.6: per-slot detail for the UNLOCK list. Empty when unlocksAny=false. */
+  unlocks: UnlockSlot[];
 }
 
 // === Phase 8a: Server-Best flags ===
@@ -804,12 +856,16 @@ export interface ResourceDetail {
   // Verdict (only present when an active character has a verdict for this
   // resource in the current snapshot). breakdown is the full per-match
   // detail deserialised from the persisted JSON, sorted descending by score.
+  // v0.1.6: unlocksAny + unlocks surface the UNLOCK flag and per-slot detail
+  // alongside the tier/score; both layers are read by the UI independently.
   verdict: {
     tier: VerdictTier;
     reason: string;
     topScore: number;
     matchedSchematicCount: number;
     breakdown: ScoredMatchView[];
+    unlocksAny: boolean;
+    unlocks: UnlockSlot[];
   } | null;
 
   // Active schematics that have at least one raw-resource slot this resource
